@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import datetime
 import streamlit.components.v1 as components
 import importlib.util
+import sys
 
 
 def _load_local_module(py_filename: str, module_name: str):
@@ -22,6 +23,8 @@ def _load_local_module(py_filename: str, module_name: str):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Impossible de charger {py_filename}.")
     mod = importlib.util.module_from_spec(spec)
+    # Register to ensure consistent module identity and clearer tracebacks.
+    sys.modules[module_name] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -29,9 +32,6 @@ def _load_local_module(py_filename: str, module_name: str):
 # Force the local modules (avoid collisions with site-packages packages named "auth"/"projects").
 auth = _load_local_module("auth.py", "carriboard_auth")
 projects = _load_local_module("projects.py", "carriboard_projects")
-
-if not hasattr(auth, "issue_session_token") or not hasattr(auth, "verify_session_token"):
-    raise RuntimeError("auth.py n'est pas à jour (fonctions de session manquantes).")
 
 # Bump this value to invalidate Streamlit cache when cleaning rules change.
 DATA_CLEAN_VERSION = "2026-03-02-01"
@@ -179,8 +179,14 @@ APP_DIR = Path(__file__).resolve().parent
 
 
 def _pick_data_root(app_dir: Path) -> Path:
-    env = (os.environ.get("CARRIBOARD_DATA_DIR") or "").strip()
-    preferred = Path(env).expanduser() if env else (app_dir / "data")
+    data_dir_raw = (os.environ.get("CARRIBOARD_DATA_DIR") or os.environ.get("DATA_ROOT") or "").strip()
+    if not data_dir_raw:
+        try:
+            data_dir_raw = str(st.secrets.get("CARRIBOARD_DATA_DIR") or st.secrets.get("DATA_ROOT") or "").strip()  # type: ignore[attr-defined]
+        except Exception:
+            data_dir_raw = ""
+
+    preferred = Path(data_dir_raw).expanduser() if data_dir_raw else (app_dir / "data")
     fallbacks = [
         preferred,
         Path.home() / ".carriboard" / "data",
@@ -294,7 +300,7 @@ if _qp_get_first("logout") == "1":
 
 if st.session_state.auth_user is None:
     token = _qp_get_first("t")
-    if token:
+    if token and hasattr(auth, "verify_session_token") and hasattr(auth, "get_user"):
         uid = auth.verify_session_token(token, _auth_token_secret())
         if uid is not None:
             restored = auth.get_user(AUTH_DB_PATH, uid)
@@ -351,7 +357,7 @@ if st.session_state.auth_user is None:
 
             def _on_auth_success(user_obj: auth.User, *, remember: bool) -> None:
                 st.session_state.auth_user = user_obj
-                if remember:
+                if remember and hasattr(auth, "issue_session_token"):
                     tok = auth.issue_session_token(
                         user_obj.id,
                         _auth_token_secret(),
@@ -866,6 +872,10 @@ st.sidebar.markdown("---")
 st.sidebar.title(" Paramètres")
 st.sidebar.markdown("---")
 st.sidebar.caption(f"Données: {DATA_CLEAN_VERSION} • Script: {os.path.abspath(__file__)}")
+if (os.environ.get("CARRIBOARD_DEBUG") or "").strip() == "1" or _qp_get_first("debug") == "1":
+    with st.sidebar.expander("Debug", expanded=False):
+        st.caption(f"DATA_ROOT: {DATA_ROOT}")
+        st.caption(f"AUTH_DB_PATH: {AUTH_DB_PATH}")
 
 PROJECT_DB_PATH = DATA_ROOT / "projects.sqlite3"
 PROJECT_FILES_DIR = DATA_ROOT / "project_files"
@@ -2106,8 +2116,12 @@ try:
 
         # --- Base de données Brute ---
         st.markdown("---")
-        with st.expander(" Voir les données détaillées brutes"):
-            st.dataframe(df, width="stretch")
+        with st.expander(" Voir les données (brutes / filtrées)"):
+            tab_raw, tab_filtered = st.tabs(["Brutes (complet)", "Filtrées (selon filtres)"])
+            with tab_raw:
+                st.dataframe(raw_full_df, width="stretch")
+            with tab_filtered:
+                st.dataframe(df, width="stretch")
             
     else:
         st.warning("Veuillez charger un fichier Excel (.xls, .xlsx) depuis le panneau de gauche.")
