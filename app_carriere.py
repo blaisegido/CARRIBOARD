@@ -161,7 +161,32 @@ st.set_page_config(
 
 # --- Auth (persistant au rafraîchissement via token en URL) ---
 APP_DIR = Path(__file__).resolve().parent
-AUTH_DB_PATH = APP_DIR / "data" / "users.sqlite3"
+
+
+def _pick_data_root(app_dir: Path) -> Path:
+    env = (os.environ.get("CARRIBOARD_DATA_DIR") or "").strip()
+    preferred = Path(env).expanduser() if env else (app_dir / "data")
+    fallbacks = [
+        preferred,
+        Path.home() / ".carriboard" / "data",
+        Path("/tmp") / "carriboard" / "data",
+    ]
+
+    for candidate in fallbacks:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            probe = candidate / ".write_test"
+            probe.write_bytes(b"1")
+            probe.unlink(missing_ok=True)
+            return candidate
+        except Exception:
+            continue
+
+    return preferred
+
+
+DATA_ROOT = _pick_data_root(APP_DIR)
+AUTH_DB_PATH = DATA_ROOT / "users.sqlite3"
 auth.init_db(AUTH_DB_PATH)
 
 
@@ -827,8 +852,8 @@ st.sidebar.title(" Paramètres")
 st.sidebar.markdown("---")
 st.sidebar.caption(f"Données: {DATA_CLEAN_VERSION} • Script: {os.path.abspath(__file__)}")
 
-PROJECT_DB_PATH = Path(dossier_app) / "data" / "projects.sqlite3"
-PROJECT_FILES_DIR = Path(dossier_app) / "data" / "project_files"
+PROJECT_DB_PATH = DATA_ROOT / "projects.sqlite3"
+PROJECT_FILES_DIR = DATA_ROOT / "project_files"
 projects.init_db(PROJECT_DB_PATH)
 
 user_id = int(st.session_state.auth_user.id)
