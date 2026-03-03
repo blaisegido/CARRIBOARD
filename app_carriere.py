@@ -13,10 +13,25 @@ from typing import Optional
 from pathlib import Path
 from datetime import datetime
 import streamlit.components.v1 as components
-import auth
-import projects
-import importlib
-projects = importlib.reload(projects)
+import importlib.util
+
+
+def _load_local_module(py_filename: str, module_name: str):
+    module_path = Path(__file__).resolve().parent / py_filename
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Impossible de charger {py_filename}.")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# Force the local modules (avoid collisions with site-packages packages named "auth"/"projects").
+auth = _load_local_module("auth.py", "carriboard_auth")
+projects = _load_local_module("projects.py", "carriboard_projects")
+
+if not hasattr(auth, "issue_session_token") or not hasattr(auth, "verify_session_token"):
+    raise RuntimeError("auth.py n'est pas à jour (fonctions de session manquantes).")
 
 # Bump this value to invalidate Streamlit cache when cleaning rules change.
 DATA_CLEAN_VERSION = "2026-03-02-01"
