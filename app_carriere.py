@@ -289,7 +289,6 @@ if st.session_state.auth_user is None:
           }
           .login-hero h1 { font-size: 34px; margin: 0 0 6px 0; }
           .login-hero p { color: #475467; margin: 0 0 18px 0; }
-          .login-footnote { color: #667085; font-size: 12px; margin-top: 8px; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -357,11 +356,6 @@ if st.session_state.auth_user is None:
                             _on_auth_success(user_obj, remember=bool(remember2))
                         except auth.AuthError as e:
                             st.error(str(e))
-
-            st.markdown(
-                '<div class="login-footnote">Astuce : définis <code>AUTH_TOKEN_SECRET</code> dans les secrets Streamlit pour garder la session valide après redémarrage du serveur.</div>',
-                unsafe_allow_html=True,
-            )
 
     st.stop()
 
