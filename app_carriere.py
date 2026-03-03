@@ -6,6 +6,7 @@ import os
 import io
 import math
 import re
+import secrets
 from uuid import uuid4
 import html
 from typing import Optional
@@ -158,50 +159,108 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- Auth ---
+# --- Auth (persistant au rafraîchissement via token en URL) ---
 APP_DIR = Path(__file__).resolve().parent
 AUTH_DB_PATH = APP_DIR / "data" / "users.sqlite3"
 auth.init_db(AUTH_DB_PATH)
 
+
+def _qp_read() -> dict:
+    if hasattr(st, "query_params"):
+        try:
+            raw = dict(st.query_params)
+        except Exception:
+            raw = {}
+        out: dict[str, str] = {}
+        for k, v in raw.items():
+            if isinstance(v, (list, tuple)):
+                out[str(k)] = str(v[0]) if v else ""
+            else:
+                out[str(k)] = str(v)
+        return out
+
+    try:
+        raw = st.experimental_get_query_params()
+    except Exception:
+        raw = {}
+
+    out: dict[str, str] = {}
+    for k, v in (raw or {}).items():
+        if isinstance(v, (list, tuple)):
+            out[str(k)] = str(v[0]) if v else ""
+        else:
+            out[str(k)] = str(v)
+    return out
+
+
+def _qp_write(params: dict[str, str]) -> None:
+    clean = {str(k): str(v) for k, v in (params or {}).items() if v not in (None, "")}
+    if hasattr(st, "query_params"):
+        try:
+            st.query_params.clear()
+            st.query_params.update(clean)
+            return
+        except Exception:
+            pass
+    st.experimental_set_query_params(**clean)
+
+
+def _qp_set(**updates: Optional[str]) -> None:
+    params = _qp_read()
+    for k, v in updates.items():
+        if v in (None, ""):
+            params.pop(str(k), None)
+        else:
+            params[str(k)] = str(v)
+    _qp_write(params)
+
+
+def _qp_get_first(key: str) -> Optional[str]:
+    v = _qp_read().get(str(key))
+    v = (v or "").strip()
+    return v if v else None
+
+
+@st.cache_resource
+def _auth_token_secret() -> bytes:
+    raw = os.environ.get("AUTH_TOKEN_SECRET")
+    if not raw:
+        try:
+            raw = st.secrets.get("AUTH_TOKEN_SECRET")  # type: ignore[attr-defined]
+        except Exception:
+            raw = None
+    if raw:
+        return str(raw).encode("utf-8")
+    return secrets.token_bytes(32)
+
+
+def _logout() -> None:
+    st.session_state.auth_user = None
+    st.session_state.auth_token = None
+    st.session_state.pop("active_project_id", None)
+    st.session_state.pop("rename_project_id", None)
+    st.session_state.pop("local_data_source", None)
+    _qp_write({})
+    st.rerun()
+
+
 if "auth_user" not in st.session_state:
     st.session_state.auth_user = None
+if "auth_token" not in st.session_state:
+    st.session_state.auth_token = None
 
-with st.sidebar.expander("Compte", expanded=True):
-    user = st.session_state.auth_user
-    if user is not None:
-        st.write(f"Connecté: **{user.username}**")
-        st.caption(f"Rôle: {user.role}")
-        if st.button("Déconnexion", use_container_width=True):
-            st.session_state.auth_user = None
-            st.rerun()
-    else:
-        auth_mode = st.radio("Accès", ["Connexion", "Créer un compte"], horizontal=True)
-        if auth_mode == "Connexion":
-            with st.form("login_form", clear_on_submit=False):
-                login_username = st.text_input("Nom d'utilisateur", key="login_username")
-                login_password = st.text_input("Mot de passe", type="password", key="login_password")
-                login_submit = st.form_submit_button("Se connecter", use_container_width=True)
-            if login_submit:
-                try:
-                    st.session_state.auth_user = auth.authenticate(AUTH_DB_PATH, login_username, login_password)
-                    st.rerun()
-                except auth.AuthError as e:
-                    st.error(str(e))
-        else:
-            with st.form("signup_form", clear_on_submit=False):
-                signup_username = st.text_input("Nom d'utilisateur", key="signup_username")
-                signup_password = st.text_input("Mot de passe (min 8)", type="password", key="signup_password")
-                signup_password2 = st.text_input("Confirmer", type="password", key="signup_password2")
-                signup_submit = st.form_submit_button("Créer le compte", use_container_width=True)
-            if signup_submit:
-                if signup_password != signup_password2:
-                    st.error("Les mots de passe ne correspondent pas.")
-                else:
-                    try:
-                        st.session_state.auth_user = auth.create_user(AUTH_DB_PATH, signup_username, signup_password)
-                        st.rerun()
-                    except auth.AuthError as e:
-                        st.error(str(e))
+if _qp_get_first("logout") == "1":
+    _logout()
+
+if st.session_state.auth_user is None:
+    token = _qp_get_first("t")
+    if token:
+        uid = auth.verify_session_token(token, _auth_token_secret())
+        if uid is not None:
+            restored = auth.get_user(AUTH_DB_PATH, uid)
+            if restored is not None:
+                st.session_state.auth_user = restored
+                st.session_state.auth_token = token
 
 if st.session_state.auth_user is None:
     components.html(
@@ -215,8 +274,95 @@ if st.session_state.auth_user is None:
         """,
         height=0,
     )
-    st.title(" Tableau de Bord - Suivi des Livraisons Carrière")
-    st.info("Veuillez vous connecter (ou créer un compte) dans la barre latérale.")
+
+    st.markdown(
+        """
+        <style>
+          section[data-testid="stSidebar"] { display: none !important; }
+          header[data-testid="stHeader"] { display: none !important; }
+          div.block-container { max-width: 980px; padding-top: 48px; }
+          div[data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 16px !important;
+            border-color: #e5e7eb !important;
+            box-shadow: 0 8px 22px rgba(16,24,40,.10) !important;
+            background: #ffffff;
+          }
+          .login-hero h1 { font-size: 34px; margin: 0 0 6px 0; }
+          .login-hero p { color: #475467; margin: 0 0 18px 0; }
+          .login-footnote { color: #667085; font-size: 12px; margin-top: 8px; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c1, c2, c3 = st.columns([1, 1.2, 1])
+    with c2:
+        st.markdown(
+            """
+            <div class="login-hero">
+              <h1>CARRIBOARD</h1>
+              <p>Connectez-vous pour accéder à vos extractions et au tableau de bord.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        with st.container(border=True):
+            tab_login, tab_signup = st.tabs(["Connexion", "Inscription"])
+
+            def _on_auth_success(user_obj: auth.User, *, remember: bool) -> None:
+                st.session_state.auth_user = user_obj
+                if remember:
+                    tok = auth.issue_session_token(
+                        user_obj.id,
+                        _auth_token_secret(),
+                        max_age_seconds=60 * 60 * 24 * 30,
+                    )
+                    st.session_state.auth_token = tok
+                    _qp_write({"t": tok})
+                else:
+                    st.session_state.auth_token = None
+                    _qp_write({})
+                st.session_state.pop("active_project_id", None)
+                st.session_state.pop("rename_project_id", None)
+                st.session_state.pop("local_data_source", None)
+                st.rerun()
+
+            with tab_login:
+                with st.form("login_form_modern", clear_on_submit=False):
+                    login_username = st.text_input("Nom d'utilisateur", key="login_username")
+                    login_password = st.text_input("Mot de passe", type="password", key="login_password")
+                    remember = st.checkbox("Rester connecté (recommandé)", value=True, key="remember_me")
+                    submit = st.form_submit_button("Se connecter", use_container_width=True, type="primary")
+                if submit:
+                    try:
+                        user_obj = auth.authenticate(AUTH_DB_PATH, login_username, login_password)
+                        _on_auth_success(user_obj, remember=bool(remember))
+                    except auth.AuthError as e:
+                        st.error(str(e))
+
+            with tab_signup:
+                with st.form("signup_form_modern", clear_on_submit=False):
+                    signup_username = st.text_input("Nom d'utilisateur", key="signup_username")
+                    signup_password = st.text_input("Mot de passe (min 8)", type="password", key="signup_password")
+                    signup_password2 = st.text_input("Confirmer", type="password", key="signup_password2")
+                    remember2 = st.checkbox("Rester connecté (recommandé)", value=True, key="remember_me2")
+                    submit2 = st.form_submit_button("Créer le compte", use_container_width=True, type="primary")
+                if submit2:
+                    if signup_password != signup_password2:
+                        st.error("Les mots de passe ne correspondent pas.")
+                    else:
+                        try:
+                            user_obj = auth.create_user(AUTH_DB_PATH, signup_username, signup_password)
+                            _on_auth_success(user_obj, remember=bool(remember2))
+                        except auth.AuthError as e:
+                            st.error(str(e))
+
+            st.markdown(
+                '<div class="login-footnote">Astuce : définis <code>AUTH_TOKEN_SECRET</code> dans les secrets Streamlit pour garder la session valide après redémarrage du serveur.</div>',
+                unsafe_allow_html=True,
+            )
+
     st.stop()
 
 # Bandeau (visible par tous les utilisateurs connectés)
@@ -636,6 +782,53 @@ def load_data(file_path, clean_version: str = DATA_CLEAN_VERSION, sheet_name=0):
 dossier_app = os.path.dirname(os.path.abspath(__file__))
 fichier_defaut = os.path.join(dossier_app, "extraction pont bsacule retraité.xlsx")
 
+user = st.session_state.auth_user
+st.sidebar.markdown(
+    """
+    <style>
+      .sidebar-user {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 12px 12px 10px 12px;
+        border: 1px solid #e5e7eb;
+        border-radius: 14px;
+        background: #ffffff;
+        box-shadow: 0 1px 2px rgba(16,24,40,.06);
+      }
+      .sidebar-user .u-name { font-weight: 800; color: #111827; line-height: 1.2; }
+      .sidebar-user .u-role { color: #667085; font-size: 12px; margin-top: 2px; }
+      .sidebar-user .u-logout a {
+        color: #475467;
+        font-size: 12px;
+        text-decoration: none;
+        padding: 6px 8px;
+        border-radius: 10px;
+        border: 1px solid transparent;
+      }
+      .sidebar-user .u-logout a:hover {
+        background: #f2f4f7;
+        border-color: #e5e7eb;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+st.sidebar.markdown(
+    f"""
+    <div class="sidebar-user">
+      <div>
+        <div class="u-name">{html.escape(user.username)}</div>
+        <div class="u-role">{html.escape(user.role)}</div>
+      </div>
+      <div class="u-logout"><a href="?logout=1">Se déconnecter</a></div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+st.sidebar.markdown("---")
+
 st.sidebar.title(" Paramètres")
 st.sidebar.markdown("---")
 st.sidebar.caption(f"Données: {DATA_CLEAN_VERSION} • Script: {os.path.abspath(__file__)}")
@@ -805,7 +998,7 @@ def _ensure_default_project_if_needed() -> None:
         ca_total=stats.get("ca_total"),
         theme_idx=0,
     )
-    st.session_state.active_project_id = project_id
+    # Ne pas forcer l'ouverture : l'utilisateur choisit d'abord l'extraction.
 
 
 _ensure_default_project_if_needed()
@@ -823,13 +1016,89 @@ if uploaded_file is not None:
     st.session_state.active_project_id = new_id
     st.session_state.rename_project_id = new_id
     st.session_state.sidebar_upload_counter += 1
+    tok = st.session_state.auth_token or _qp_get_first("t")
+    _qp_set(t=tok, p=new_id)
     st.rerun()
 
 # Projects list (for the top bar)
 all_projects = projects.list_projects(PROJECT_DB_PATH, user_id)
-if not st.session_state.active_project_id and all_projects:
-    st.session_state.active_project_id = all_projects[0].id
+if not st.session_state.active_project_id:
+    requested = _qp_get_first("p")
+    if requested:
+        if projects.get_project(PROJECT_DB_PATH, user_id, requested) is not None:
+            st.session_state.active_project_id = requested
+        else:
+            _qp_set(p=None)
 active_project = projects.get_project(PROJECT_DB_PATH, user_id, st.session_state.active_project_id) if st.session_state.active_project_id else None
+
+if not st.session_state.active_project_id or active_project is None:
+    st.title("Extractions")
+    st.caption("Choisissez une extraction pour ouvrir le tableau de bord.")
+
+    if "picker_upload_counter" not in st.session_state:
+        st.session_state.picker_upload_counter = 0
+
+    search = st.text_input("Rechercher", value="", key="project_picker_search")
+    q = (search or "").strip().casefold()
+    filtered = [p for p in all_projects if not q or q in (p.name or "").casefold()]
+
+    if filtered:
+        cols = st.columns(2)
+        for i, p in enumerate(filtered):
+            date_range = ""
+            if p.date_min and p.date_max:
+                date_range = f"{p.date_min} → {p.date_max}"
+            elif p.date_min:
+                date_range = f"Depuis {p.date_min}"
+            elif p.date_max:
+                date_range = f"Jusqu'à {p.date_max}"
+
+            tonnage = _fmt_number_fr(float(p.tonnage_total or 0.0), decimals=0) + " t"
+            ca = _human_money(float(p.ca_total or 0.0))
+            liv = str(int(p.nb_livraisons or 0))
+
+            with cols[i % 2]:
+                with st.container(border=True):
+                    st.markdown(f"**{p.name}**")
+                    if date_range:
+                        st.caption(date_range)
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        st.metric("Livraisons", liv)
+                    with c2:
+                        st.metric("Tonnage", tonnage)
+                    with c3:
+                        st.metric("CA", ca)
+
+                    if st.button("Ouvrir", key=f"open_project_{p.id}", type="primary", use_container_width=True):
+                        st.session_state.active_project_id = p.id
+                        st.session_state.rename_project_id = None
+                        tok = st.session_state.auth_token or _qp_get_first("t")
+                        _qp_set(t=tok, p=p.id)
+                        st.rerun()
+
+        st.divider()
+    else:
+        st.info("Aucune extraction trouvée pour ce compte.")
+
+    st.subheader("Importer une nouvelle extraction")
+    picker_file = st.file_uploader(
+        "Importer (Excel ou CSV)",
+        type=["xls", "xlsx", "xlsm", "csv"],
+        key=f"picker_uploader_{st.session_state.picker_upload_counter}",
+    )
+    if picker_file is not None:
+        current = None
+        next_theme_idx = 0
+        new_id = _create_project_from_upload(picker_file, theme_idx=next_theme_idx)
+        st.session_state.active_project_id = new_id
+        st.session_state.rename_project_id = new_id
+        st.session_state.picker_upload_counter += 1
+        tok = st.session_state.auth_token or _qp_get_first("t")
+        _qp_set(t=tok, p=new_id)
+        st.rerun()
+
+    st.stop()
 
 # --- Barre de dossiers (zone principale, en haut) ---
 st.markdown(
@@ -948,6 +1217,8 @@ with bar_right:
                         ):
                             st.session_state.active_project_id = p.id
                             st.session_state.rename_project_id = None
+                            tok = st.session_state.auth_token or _qp_get_first("t")
+                            _qp_set(t=tok, p=p.id)
                             st.rerun()
 
             st.divider()
@@ -974,6 +1245,8 @@ if st.session_state.show_top_uploader:
         st.session_state.rename_project_id = new_id
         st.session_state.top_upload_counter += 1
         st.session_state.show_top_uploader = False
+        tok = st.session_state.auth_token or _qp_get_first("t")
+        _qp_set(t=tok, p=new_id)
         st.rerun()
 
 active_project = projects.get_project(PROJECT_DB_PATH, user_id, st.session_state.active_project_id) if st.session_state.active_project_id else None

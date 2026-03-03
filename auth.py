@@ -1,5 +1,7 @@
+import base64
 import hashlib
 import hmac
+import json
 import re
 import secrets
 import sqlite3
@@ -63,6 +65,68 @@ def init_db(db_path: Path) -> None:
             """
         )
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_username_canon ON users(username_canon)")
+
+
+def get_user(db_path: Path, user_id: int) -> Optional[User]:
+    init_db(db_path)
+    with sqlite3.connect(db_path) as con:
+        row = con.execute(
+            "SELECT id, username, role FROM users WHERE id = ?",
+            (int(user_id),),
+        ).fetchone()
+        if not row:
+            return None
+        uid, username, role = row
+        return User(id=int(uid), username=str(username), role=str(role))
+
+
+def _b64u_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64u_decode(data: str) -> bytes:
+    s = (data or "").strip()
+    pad = "=" * ((4 - (len(s) % 4)) % 4)
+    return base64.urlsafe_b64decode(s + pad)
+
+
+def issue_session_token(user_id: int, secret: bytes, *, max_age_seconds: int) -> str:
+    if not secret:
+        raise ValueError("secret is required")
+    now = int(datetime.now(timezone.utc).timestamp())
+    payload = {"uid": int(user_id), "iat": now, "exp": now + int(max_age_seconds)}
+    payload_raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    sig = hmac.new(secret, payload_raw, hashlib.sha256).digest()
+    return f"v1.{_b64u_encode(payload_raw)}.{_b64u_encode(sig)}"
+
+
+def verify_session_token(token: str, secret: bytes) -> Optional[int]:
+    if not token or not secret:
+        return None
+    parts = str(token).split(".")
+    if len(parts) != 3 or parts[0] != "v1":
+        return None
+    try:
+        payload_raw = _b64u_decode(parts[1])
+        sig = _b64u_decode(parts[2])
+    except Exception:
+        return None
+
+    expected = hmac.new(secret, payload_raw, hashlib.sha256).digest()
+    if not hmac.compare_digest(expected, sig):
+        return None
+
+    try:
+        payload = json.loads(payload_raw.decode("utf-8"))
+        uid = int(payload.get("uid"))
+        exp = int(payload.get("exp"))
+    except Exception:
+        return None
+
+    now = int(datetime.now(timezone.utc).timestamp())
+    if exp < now:
+        return None
+    return uid
 
 
 def user_count(db_path: Path) -> int:
