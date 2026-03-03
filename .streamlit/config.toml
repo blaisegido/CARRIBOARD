@@ -1,0 +1,7 @@
+[server]
+# Local-only dashboard: disable XSRF to avoid "AxiosError 400" when multiple Streamlit apps
+# run on different ports under the same host (cookies are shared across ports).
+enableXsrfProtection = false
+
+# Increase upload limit (in MB) for big Excel extracts.
+maxUploadSize = 500

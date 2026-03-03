@@ -1,0 +1,11 @@
+# Développement de l'Application Streamlit
+
+- [x] Installer les dépendances (streamlit, plotly, pandas)
+- [x] Créer le script principal `app.py`
+- [x] Implémenter le chargement et le nettoyage des données du fichier Excel
+- [x] Créer la barre latérale (Sidebar) pour les filtres (Date, Client, Produit)
+- [x] Implémenter le calcul et l'affichage des KPIs (CA, Tonnage, etc.)
+- [x] Créer les graphiques avec Plotly (Évolution, Répartition, Top Clients)
+- [x] Afficher le tableau de données détaillé
+- [x] Ajouter une option d'export (Excel/CSV) depuis l'application
+- [x] Créer un script de lancement facile (ex: [.bat](file:///C:/Users/Blaiqe/.gemini/antigravity/scratch/D%C3%A9marrer_Tableau_Bord.bat)) pour l'utilisateur

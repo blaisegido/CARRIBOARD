@@ -1,0 +1,6 @@
+{
+  "artifactType":  "ARTIFACT_TYPE_IMPLEMENTATION_PLAN",
+  "summary":  "Plan détaillé pour la création de l'application logicielle Python de suivi des livraisons de la carrière. L'application lira le fichier Excel, affichera des KPIs, des tableaux et des graphiques, et permettra éventuellement l'export.",
+  "updatedAt":  "2026-02-28T18:22:32.373132800Z",
+  "version":  "2"
+}

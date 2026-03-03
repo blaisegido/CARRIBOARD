@@ -1,0 +1,19 @@
+__pycache__/
+.pytest_cache/
+.streamlit/secrets.toml
+
+# Local state / uploads (do not commit)
+data/
+*.sqlite3
+*.db
+
+# Extractions / exports (often sensitive)
+*.xlsx
+*.xlsm
+*.xls
+*.csv
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/

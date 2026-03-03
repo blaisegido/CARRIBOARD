@@ -1,0 +1,47 @@
+# Bilan du Tableau de Bord « Carrière »
+
+Le fichier Excel dynamique a été généré avec succès en utilisant l'automatisation native de Microsoft Excel (COM) !
+
+Le fichier final se trouve dans votre dossier : 
+[C:\Users\Blaiqe\.gemini\antigravity\brain\f755ebb4-8f75-4f3d-a38b-45fff58349d9\Tableau_Bord_Carriere.xlsm](file:///Users/Blaiqe/.gemini/antigravity/brain/f755ebb4-8f75-4f3d-a38b-45fff58349d9/Tableau_Bord_Carriere.xlsm)
+
+## Ce qui a été mis en place :
+
+✅ **Feuille source sécurisée** : Les données d'origine sont regroupées dans un tableau structuré ("TBL_Livraisons") sur la feuille **"Pont Bascule Retraité"**.
+✅ **Colonnes dynamiques** : Les colonnes `Année`, `Trimestre`, `Jour`, `Jour Lettre` ont été ajoutées. Les formules (visibles et éditables) pointent directement sur les bonnes cellules (*ex: `=YEAR(...)`*).
+✅ **Feuille d'Analyses** : 3 Tableaux Croisés Dynamiques (TCD) ont été créés pour compiler : L'évolution mensuelle, la répartition par produits, et le classement client.
+✅ **Tableau de Bord** : 
+   - Thème et design aéré intégrant les couleurs personnalisées (Orange dominant / \#FF8C00).
+   - Cartes KPIs reliées dynamiquement à la feuille source via les formules Excel (ex: `SOMME()`, `NBVAL()`).
+   - Graphiques dynamiques branchés sur les TCD pour s'actualiser automatiquement.
+
+> [!NOTE]
+> **Important :** Chaque fois que vous collerez de nouvelles lignes au bas de la feuille "Pont Bascule Retraité", il vous suffira d'aller dans l'onglet *Données* > **Actualiser tout** et l'intégralité du tableau de bord prendra en compte vos nouveautés !
+
+## Actions manuelles requises de votre côté
+
+L'automatisation a été restreinte sur 2 points par la sécurité de Windows/Excel (Protection contre les virus) :
+
+### 1. Ajout de la Macro PDF (si vous la souhaitez toujours)
+Par mesure de sécurité, la fonction d'injection de code VBA est souvent bloquée par défaut dans Excel.
+Pour l'ajouter :
+1. Ouvrez le fichier. Appuyez sur `Alt + F11` pour ouvrir l'éditeur VBA.
+2. Menu **Insertion** > **Module**.
+3. Collez ce code :
+```vba
+Sub ExporterDashboardPDF()
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets("TABLEAU DE BORD")
+    Dim FileName As String
+    FileName = ThisWorkbook.Path & "\TDB_Carriere_" & Format(Date, "yyyy-mm-dd") & ".pdf"
+    ws.ExportAsFixedFormat Type:=0, FileName:=FileName, Quality:=0, _
+        IncludeDocProperties:=True, IgnorePrintAreas:=False, OpenAfterPublish:=True
+    MsgBox "Tableau de Bord exporté en PDF avec succès !", vbInformation, "Export Réussi"
+End Sub
+```
+4. Sur le Tableau de Bord, insérez une forme (ex: Rectangle orange "Export PDF"), faites un clic-droit > **Affecter une macro** > Choisissez `ExporterDashboardPDF`.
+
+### 2. Ajout des Segments (Slicers)
+Sélectionnez le graphique mensuel, allez dans **Analyse du graphique croisé dynamique** > **Insérer un segment**, et cochez *Année*, *Trimestre*, *Mois*, etc. 
+
+Le tableau de bord est prêt à être utilisé !

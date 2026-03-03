@@ -1,0 +1,199 @@
+# Tableau de Bord Excel – Suivi des Livraisons d'une Carrière
+
+## Contexte
+
+Transformer une extraction brute du pont bascule en un **tableau de bord Excel professionnel et dynamique** : la feuille source mise à jour → tout le dashboard se rafraîchit automatiquement. Toutes les cellules de calcul affichent leurs formules Excel (visibles dans la barre de formule).
+
+---
+
+## Phase 1 — Préparation des Données
+
+### 1.1 Structure des Colonnes Source
+
+Le fichier contient les colonnes suivantes (une ligne = une livraison) :
+
+| Colonne | Description |
+|---|---|
+| `Ticket` | Numéro de bon de pesée |
+| `Societe` | Société |
+| `Operation` | Type d'opération |
+| `Client` | Nom du client |
+| `Produit` | Nature du matériau |
+| `Date_ent` | Date d'entrée (format `AAAA-MM-JJ`) |
+| `Heure_ent` | Heure d'entrée |
+| `Poids1` | Poids brut (entrée) |
+| `Date_sort` | Date de sortie |
+| `Heure_sort` | Heure de sortie |
+| `Poids2` | Poids sortie |
+| `Net` | Poids net livré (en tonnes) |
+| `Site de pesée` | Localisation du pont bascule |
+| `Numero jour` | Numéro du jour |
+| `Numero semaine` | Numéro de semaine dans l'année |
+| `Mois` | Numéro de mois |
+| `Mois en lettres` | Libellé du mois |
+| `Prix à la tonne` | Prix unitaire (€/t) |
+| `Chiffre d'affaires` | CA calculé (`Net × Prix à la tonne`) |
+| `Observations` | Commentaires libres |
+
+### 1.2 Colonnes Calculées à Ajouter
+
+- `Année` — extraite de `Date_ent`
+- `Trimestre` — T1 / T2 / T3 / T4
+- `Jour` (numéro du jour, ex : lundi = 2)
+- `Jour en lettres` (Lundi, Mardi…)
+- `Durée passage` — `Heure_sort - Heure_ent` (rotation)
+
+### 1.3 Tables de Données
+
+Plusieurs tables nommées seront créées depuis la feuille source :
+
+| Table | Contenu |
+|---|---|
+| `TBL_Livraisons` | Table principale complète |
+| `TBL_MensuelCA` | CA et tonnage agrégés par mois/année |
+| `TBL_Produits` | Aggregats par nature de produit |
+| `TBL_Clients` | Aggregats par client (CA, tonnage, nb livraisons) |
+| `TBL_Hebdo` | Agrégat hebdomadaire |
+| `TBL_Journalier` | Agrégat journalier |
+| `TBL_Parametres` | Prix/tonne par produit, objectifs CA, nom carrière, nom site |
+
+---
+
+## Phase 2 — Indicateurs Clés (KPIs)
+
+### KPIs Globaux
+
+| Indicateur | Formule/Logique |
+|---|---|
+| CA Total (€) | `SOMME(Chiffre d'affaires)` |
+| Tonnage Total (T) | `SOMME(Net)` |
+| Nb de Livraisons | `NB(Ticket)` |
+| Nb de Clients distincts | `NB.SI.ENS(...)` |
+| Nb de Produits différents | `NB.SI.ENS(...)` |
+| Prix moyen / tonne | `CA Total / Tonnage Total` |
+| Livraisons / jour ouvré | `Nb livraisons / nb jours actifs` |
+| Durée moyenne de passage | `MOYENNE(Durée passage)` |
+
+### KPIs Temporels
+
+- CA du mois en cours vs mois précédent (Δ% + icône ▲/▼)
+- Tonnage du mois en cours vs mois précédent
+- Meilleur mois (CA) — `MAX + INDEX/EQUIV`
+- Meilleure semaine (livraisons)
+- Jour le plus actif (pic de livraisons)
+- CA cumulé YTD (Year-to-Date)
+- Tendance 3 mois glissants (sparkline)
+
+### KPIs Produits
+
+- Produit N°1 (CA) — `INDEX/EQUIV + GRANDE.VALEUR`
+- Produit N°1 (Tonnage)
+- Répartition CA par produit (%)
+- Marge de mix produit (écart de prix moyen entre produits)
+
+### KPIs Clients
+
+- Top 3 clients (CA + Tonnage)
+- Concentration : part CA des 5 premiers clients (%)
+- Client le plus régulier (nb livraisons)
+- Nouveau client / client inactif (si historique disponible)
+
+---
+
+## Phase 3 — Graphiques
+
+Chaque type de données reçoit le graphique le mieux adapté :
+
+| # | Graphique | Type | Données |
+|---|---|---|---|
+| 1 | Évolution mensuelle du CA | **Courbe** (trend) | Mois × CA |
+| 2 | Pics de livraisons (hebdo/journalier) | **Histogramme groupé** | Semaine × Nb livraisons |
+| 3 | Comparatif CA vs Tonnage | **Double axe (barre + courbe)** | Mois × CA / Tonnage |
+| 4 | Répartition par nature de produit (CA) | **Donut** | Produit × % CA |
+| 5 | Répartition par nature de produit (Tonnage) | **Camembert** | Produit × % Tonnage |
+| 6 | Top 20 clients par CA | **Barres horizontales** classées par CA |
+| 7 | Top 20 clients par Tonnage | **Barres horizontales** classées par Tonnage |
+| 8 | Livraisons par jour de la semaine | **Radar / Colonnes** | Jour × Nb livraisons |
+| 9 | Évolution hebdomadaire du CA | **Sparklines** en mini-cartes | Semaine × CA |
+| 10 | Analyse client × produit | **Carte de chaleur (MFC)** | Matrice Client/Produit |
+
+---
+
+## Phase 4 — Structure du Fichier Excel
+
+```
+📁 Tableau_Bord_Carriere.xlsx
+│
+├── 🟠 TABLEAU DE BORD          ← Onglet principal (KPIs + Graphiques)
+├── 📊 Analyse Mensuelle        ← TCD CA/Tonnage par mois
+├── 📊 Analyse Produits         ← TCD par nature de produit
+├── 📊 Analyse Clients          ← TCD Top 20 clients
+├── 📊 Analyse Hebdo/Journalière← TCD par semaine et par jour
+├── 📋 Extraction Pont Bascule Retraité ← TABLE SOURCE (mise à jour = refresh auto)
+└── ⚙️  Paramètres              ← Prix/tonne, objectifs, noms carrière/site
+```
+
+> [!IMPORTANT]
+> La feuille **"Extraction Pont Bascule Retraité"** est la source unique de vérité. Toutes les formules, TCD et graphiques pointent vers cette table. Mettre à jour cette feuille suffit à rafraîchir tout le dashboard (via `Actualiser tout`).
+
+> [!NOTE]
+> Aucune protection de feuille ne sera appliquée. Toutes les formules restent visibles et éditables.
+
+---
+
+## Phase 5 — Design & Mise en Forme
+
+- **Palette dominante** : Orange et ses variantes (`#FF6B00`, `#FF9A3C`, `#FFB347`, `#FFF0E0`)
+- **Couleurs complémentaires** : Gris anthracite, blanc cassé, vert émeraude (positif), rouge brique (négatif)
+- **En-tête** : Nom de la carrière (grand) + Nom du site (sous-titre)
+- **Cartes KPI** avec icônes variées : 🪨 🚛 💶 📅 📦 ⚖️ ▲ ▼ ✅ ⚠️
+- Mise en forme conditionnelle : rouge/orange/vert selon seuils
+- Mise en page impression A4 paysage prête à l'emploi
+- Typographie claire, titres de section bien hiérarchisés
+
+---
+
+## Phase 6 — Interactivité (Segments & Filtres)
+
+Segments (Slicers) disponibles sur le tableau de bord :
+
+- 📅 **Année**
+- 📅 **Trimestre**
+- 📅 **Mois**
+- 📅 **Semaine**
+- 📅 **Jour**
+- 🪨 **Produit**
+- 🏢 **Client**
+- 🏗️ **Site de pesée**
+- 📋 **Opération**
+
+Tous reliés aux TCD pour mise à jour synchronisée de tous les graphiques.
+
+---
+
+## Phase 7 — Macro VBA : Export PDF
+
+Une macro `ExporterDashboardPDF` sera créée pour :
+
+1. Sélectionner la feuille **TABLEAU DE BORD**
+2. Définir la zone d'impression
+3. Exporter en PDF dans le même dossier que le fichier Excel
+4. Nommer le PDF automatiquement : `TDB_Carriere_AAAA-MM-JJ.pdf`
+5. (Optionnel) Afficher un message de confirmation avec le chemin du fichier
+
+```vba
+' Bouton "📄 Exporter en PDF" visible sur le tableau de bord
+Sub ExporterDashboardPDF()
+    ' Code généré lors de l'implémentation
+End Sub
+```
+
+---
+
+## Prérequis pour Démarrer
+
+> [!IMPORTANT]
+> Pour générer le fichier Excel, merci de **copier votre fichier XLS** dans le dossier suivant puis de m'indiquer son nom exact :
+> `C:\Users\Blaiqe\.gemini\antigravity\scratch\`
+>
+> Ou bien copiez-le à tout autre emplacement et partagez le chemin complet.

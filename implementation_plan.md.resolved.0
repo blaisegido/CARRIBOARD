@@ -1,0 +1,152 @@
+# Tableau de Bord Excel – Suivi des Livraisons d'une Carrière
+
+## Contexte
+
+Le projet consiste à transformer une extraction brute du pont bascule (fichier XLS) en un **tableau de bord Excel professionnel** permettant au dirigeant de la carrière de suivre en temps réel ses livraisons, la nature des produits vendus et son chiffre d'affaires.
+
+---
+
+## Phase 1 — Analyse et Préparation des Données
+
+### 1.1 Lecture et Audit du Fichier Source
+
+- Identifier toutes les colonnes disponibles (date, client, produit/nature, tonnage, prix unitaire, montant, etc.)
+- Repérer les valeurs manquantes, doublons, incohérences de format (dates, nombres)
+- Comprendre la granularité des données (une ligne = une livraison ?)
+
+### 1.2 Nettoyage et Normalisation
+
+- Standardiser les formats de dates (JJ/MM/AAAA)
+- Nettoyer les noms de clients et de produits (casse, espaces, abréviations)
+- Calculer les montants si absents : `Chiffre d'affaires = Tonnage × Prix Unitaire`
+- Ajouter des colonnes calculées utiles :
+  - `Mois` (ex : Janvier 2025)
+  - `Semaine` (numéro de semaine)
+  - `Trimestre`
+  - `Année`
+
+### 1.3 Table de Données Structurée
+
+- Convertir les données brutes en **Tableau Excel structuré** (Ctrl+T) pour faciliter les Tableaux Croisés Dynamiques
+- Nommer la table : `TBL_Livraisons`
+
+---
+
+## Phase 2 — Construction des Indicateurs Clés (KPIs)
+
+### KPIs Globaux (vue d'ensemble)
+
+| Indicateur | Description |
+|---|---|
+| **CA Total** | Chiffre d'affaires sur la période |
+| **Tonnage Total** | Poids total livré (en tonnes) |
+| **Nombre de Livraisons** | Nombre de bons de pesée |
+| **Nombre de Clients** | Clients distincts servis |
+| **Prix Moyen / Tonne** | CA total / Tonnage total |
+| **Livraisons / Jour Ouvré** | Fréquence moyenne |
+
+### KPIs par Période
+
+- CA mensuel vs objectif (si disponible)
+- Évolution en % vs mois précédent
+- Meilleur mois / pire mois
+
+### KPIs par Produit / Nature
+
+- Répartition du tonnage par nature de matériau
+- Répartition du CA par nature
+- Produit le plus vendu (en tonnage et en CA)
+
+### KPIs par Client
+
+- Top 10 clients (tonnage et CA)
+- Part de CA des 3 premiers clients (concentration)
+
+---
+
+## Phase 3 — Création des Graphiques
+
+### Graphique 1 — Évolution mensuelle du CA (Courbe)
+- Axe X : Mois
+- Axe Y : CA (€)
+- Permet de visualiser la tendance et la saisonnalité
+
+### Graphique 2 — Évolution mensuelle du Tonnage (Histogramme)
+- Axe X : Mois
+- Axe Y : Tonnage (T)
+- Mise en évidence des pics de production
+
+### Graphique 3 — Répartition par Nature de Produit (Camembert / Donut)
+- Part de chaque matériau dans le tonnage total
+- Variante : part dans le CA total
+
+### Graphique 4 — Top 10 Clients (Barre horizontale)
+- Classement par CA ou tonnage
+- Mise en évidence du client principal
+
+### Graphique 5 — CA Hebdomadaire / Journalier (Sparklines ou mini-graphes)
+- Vue micro pour identifier les jours de forte activité
+
+### Graphique 6 — Comparatif Mensuel CA vs Tonnage (Double axe)
+- Permet de détecter les variations de prix moyen
+
+---
+
+## Phase 4 — Structure du Fichier Excel Final
+
+Le fichier contiendra plusieurs onglets organisés logiquement :
+
+```
+📁 Tableau_Bord_Carriere.xlsx
+├── 📋 TABLEAU DE BORD    ← Onglet principal (KPIs + Graphiques)
+├── 📊 Synthèse Mensuelle ← TCD par mois
+├── 📊 Analyse Produits   ← TCD par nature de matériau
+├── 📊 Analyse Clients    ← TCD par client
+├── 📄 Données Brutes     ← Table source nettoyée (TBL_Livraisons)
+└── ⚙️  Paramètres         ← Prix unitaires, objectifs CA, etc.
+```
+
+---
+
+## Phase 5 — Mise en Forme et Design
+
+- **Palette de couleurs** professionnelle (ton pierre/carrière : gris ardoise, ocre, blanc cassé)
+- En-tête avec logo fictif / nom de la carrière
+- Cartes KPI stylisées avec icônes (▲ hausse / ▼ baisse)
+- Mise en forme conditionnelle (rouge/vert sur les écarts)
+- Impression formatée A4 paysage
+- Protection des feuilles de calcul (lecture seule sauf paramètres)
+
+---
+
+## Phase 6 — Interactivité (Filtres et Slicers)
+
+- **Segments (Slicers)** : filtrer par Mois, Année, Produit, Client
+- **Chronologie** : filtrage temporel dynamique
+- Tous les graphiques reliés aux mêmes TCD pour mise à jour automatique
+
+---
+
+## Plan de Réalisation Technique
+
+| Étape | Action | Outil |
+|---|---|---|
+| 1 | Lire et auditer le fichier XLS source | Python (openpyxl / pandas) |
+| 2 | Nettoyer et enrichir les données | Python (pandas) |
+| 3 | Générer les TCD et KPIs | Python (openpyxl / xlsxwriter) |
+| 4 | Créer les graphiques dans Excel | Python (openpyxl charts) |
+| 5 | Mettre en forme le tableau de bord | Python (styles, formats) |
+| 6 | Exporter le fichier `.xlsx` final | Python |
+
+---
+
+## Livrables
+
+- ✅ `Tableau_Bord_Carriere.xlsx` — fichier Excel final prêt à l'emploi
+- ✅ Script Python documenté pour régénérer le tableau de bord à chaque nouvelle extraction
+
+---
+
+## Prochaine étape
+
+Merci de **fournir le fichier XLS source** pour que je puisse lancer la Phase 1 et adapter le tableau de bord aux données réelles de votre carrière.
