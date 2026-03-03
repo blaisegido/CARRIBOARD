@@ -332,7 +332,7 @@ if st.session_state.auth_user is None:
                     login_username = st.text_input("Nom d'utilisateur", key="login_username")
                     login_password = st.text_input("Mot de passe", type="password", key="login_password")
                     remember = st.checkbox("Rester connecté (recommandé)", value=True, key="remember_me")
-                    submit = st.form_submit_button("Se connecter", use_container_width=True, type="primary")
+                    submit = st.form_submit_button("Se connecter", width="stretch", type="primary")
                 if submit:
                     try:
                         user_obj = auth.authenticate(AUTH_DB_PATH, login_username, login_password)
@@ -346,7 +346,7 @@ if st.session_state.auth_user is None:
                     signup_password = st.text_input("Mot de passe (min 8)", type="password", key="signup_password")
                     signup_password2 = st.text_input("Confirmer", type="password", key="signup_password2")
                     remember2 = st.checkbox("Rester connecté (recommandé)", value=True, key="remember_me2")
-                    submit2 = st.form_submit_button("Créer le compte", use_container_width=True, type="primary")
+                    submit2 = st.form_submit_button("Créer le compte", width="stretch", type="primary")
                 if submit2:
                     if signup_password != signup_password2:
                         st.error("Les mots de passe ne correspondent pas.")
@@ -1064,7 +1064,7 @@ if not st.session_state.active_project_id or active_project is None:
                     with c3:
                         st.metric("CA", ca)
 
-                    if st.button("Ouvrir", key=f"open_project_{p.id}", type="primary", use_container_width=True):
+                    if st.button("Ouvrir", key=f"open_project_{p.id}", type="primary", width="stretch"):
                         st.session_state.active_project_id = p.id
                         st.session_state.rename_project_id = None
                         tok = st.session_state.auth_token or _qp_get_first("t")
@@ -1172,7 +1172,7 @@ with bar_left:
 with bar_right:
     btn_c1, btn_c2 = st.columns(2, vertical_alignment="center")
     with btn_c1:
-        with st.popover("Voir les extractions", use_container_width=True):
+        with st.popover("Voir les extractions", width="stretch"):
             st.markdown("**Sélectionner une extraction**")
             search_val = st.text_input(
                 "Rechercher",
@@ -1207,7 +1207,7 @@ with bar_right:
                             (p.name or "(Sans nom)") + (" (actif)" if is_active else ""),
                             key=f"pick_project_{p.id}",
                             type="primary" if is_active else "secondary",
-                            use_container_width=True,
+                            width="stretch",
                         ):
                             st.session_state.active_project_id = p.id
                             st.session_state.rename_project_id = None
@@ -1216,12 +1216,12 @@ with bar_right:
                             st.rerun()
 
             st.divider()
-            if active_project and st.button("Renommer l'extraction active", use_container_width=True):
+            if active_project and st.button("Renommer l'extraction active", width="stretch"):
                 st.session_state.rename_project_id = active_project.id
                 st.rerun()
 
     with btn_c2:
-        if st.button("＋ Nouvelle extraction", type="primary", use_container_width=True):
+        if st.button("＋ Nouvelle extraction", type="primary", width="stretch"):
             st.session_state.show_top_uploader = not bool(st.session_state.show_top_uploader)
 
 if st.session_state.show_top_uploader:
@@ -1250,9 +1250,9 @@ if active_project and st.session_state.rename_project_id == active_project.id:
         new_name = st.text_input("Nom du dossier", value=active_project.name)
         c1, c2 = st.columns(2)
         with c1:
-            ok = st.form_submit_button("Enregistrer", use_container_width=True)
+            ok = st.form_submit_button("Enregistrer", width="stretch")
         with c2:
-            cancel = st.form_submit_button("Annuler", use_container_width=True)
+            cancel = st.form_submit_button("Annuler", width="stretch")
     if ok:
         try:
             saved = projects.rename_project(PROJECT_DB_PATH, user_id=user_id, project_id=active_project.id, new_name=new_name)
@@ -1618,7 +1618,7 @@ try:
                                         title="Graphique 1: Évolution Mensuelle du CA (€)", markers=True,
                                         color_discrete_sequence=[theme["primary"]])
                          fig1.update_layout(xaxis_title="Mois", yaxis_title="CA (€)")
-                         st.plotly_chart(apply_plotly_style(fig1), use_container_width=True)
+                         st.plotly_chart(apply_plotly_style(fig1), width="stretch")
 
                 # Graphique 2 : Évolution mensuelle du Tonnage (Histogramme)
                 with row1_col2:
@@ -1627,7 +1627,7 @@ try:
                                        title="Graphique 2: Évolution Mensuelle du Tonnage (T)",
                                        color_discrete_sequence=[theme["secondary"]])
                          fig2.update_layout(xaxis_title="Mois", yaxis_title="Tonnage (T)")
-                         st.plotly_chart(apply_plotly_style(fig2), use_container_width=True)
+                         st.plotly_chart(apply_plotly_style(fig2), width="stretch")
 
                 row2_col1, row2_col2 = st.columns(2)
 
@@ -1648,7 +1648,7 @@ try:
                             )
                             fig3_t.update_traces(textposition="inside", textinfo="percent+label")
                             fig3_t.update_layout(margin=dict(t=0, b=0, l=0, r=0))
-                            st.plotly_chart(apply_plotly_style(fig3_t), use_container_width=True)
+                            st.plotly_chart(apply_plotly_style(fig3_t), width="stretch")
                         with tab_p2:
                             fig3_ca = px.pie(
                                 df_prod_pie,
@@ -1659,7 +1659,7 @@ try:
                             )
                             fig3_ca.update_traces(textposition="inside", textinfo="percent+label")
                             fig3_ca.update_layout(margin=dict(t=0, b=0, l=0, r=0))
-                            st.plotly_chart(apply_plotly_style(fig3_ca), use_container_width=True)
+                            st.plotly_chart(apply_plotly_style(fig3_ca), width="stretch")
 
                 # Graphique 4 : Top 10 Clients (Barre horizontale)
                 with row2_col2:
@@ -1674,7 +1674,7 @@ try:
                                       hover_data=[poids_col])
                         fig4.update_traces(texttemplate='%{text:.2s} €', textposition='outside')
                         fig4.update_layout(xaxis_title="CA (€)", yaxis_title="", margin=dict(l=150))
-                        st.plotly_chart(apply_plotly_style(fig4), use_container_width=True)
+                        st.plotly_chart(apply_plotly_style(fig4), width="stretch")
 
                 row3_col1, row3_col2 = st.columns(2)
 
@@ -1695,7 +1695,7 @@ try:
                             xaxis=dict(showgrid=False),
                             yaxis=dict(showgrid=False),
                         )
-                        st.plotly_chart(apply_plotly_style(fig5), use_container_width=True)
+                        st.plotly_chart(apply_plotly_style(fig5), width="stretch")
 
                 # Graphique 6 : Comparatif Mensuel CA vs Tonnage (Double axe)
                 with row3_col2:
@@ -1719,7 +1719,7 @@ try:
                             ),
                             legend=dict(x=0, y=1.1, orientation="h"),
                         )
-                        st.plotly_chart(apply_plotly_style(fig6), use_container_width=True)
+                        st.plotly_chart(apply_plotly_style(fig6), width="stretch")
             except Exception as e:
                 st.write(f"Erreur d'affichage des graphiques : {e}")
 
@@ -1767,7 +1767,7 @@ try:
                     key="update_dedup_ticket",
                 )
 
-                submitted = st.form_submit_button("🚀 Mettre à jour", type="primary", use_container_width=True)
+                submitted = st.form_submit_button("🚀 Mettre à jour", type="primary", width="stretch")
 
             if submitted:
                 if update_file is None:
@@ -1925,7 +1925,7 @@ try:
                                     ),
                                 },
                                 hide_index=True,
-                                use_container_width=True
+                                width="stretch"
                             )
                             st.markdown(
                                 f"<div class='print-only print-table'>{df_prod.to_html(index=False)}</div>",
@@ -1940,7 +1940,7 @@ try:
                             fig_pie = px.pie(df_prod, values=poids_col, names=produit_col, hole=0.3, color_discrete_sequence=theme["pie"])
                             fig_pie.update_traces(textposition='inside', textinfo='none') # Hide text inside to match Excel
                             fig_pie.update_layout(showlegend=True, margin=dict(t=0, b=0, l=0, r=0))
-                            st.plotly_chart(apply_plotly_style(fig_pie, kind="pie"), use_container_width=True)
+                            st.plotly_chart(apply_plotly_style(fig_pie, kind="pie"), width="stretch")
 
             # TAB 2: Evolution des livraisons (Correspond à la capture 3 - Courbes croisées)
             with tab_produit:
@@ -1975,7 +1975,7 @@ try:
                         )
                         fig_lines.update_layout(xaxis_title="Période", yaxis_title="Somme de Net (T)", 
                                                 legend_title="Produit", hovermode="x unified")
-                    st.plotly_chart(apply_plotly_style(fig_lines), use_container_width=True)
+                        st.plotly_chart(apply_plotly_style(fig_lines), width="stretch")
 
             # TAB 3: Performance Clients (Correspond à la capture 2 - Analyse matricielle)
             with tab_livraison:
@@ -2017,7 +2017,7 @@ try:
                                     ),
                                 },
                                 hide_index=True,
-                                use_container_width=True
+                                width="stretch"
                             )
                             st.markdown(
                                 f"<div class='print-only print-table'>{top_clients.to_html(index=False)}</div>",
@@ -2038,7 +2038,7 @@ try:
                         st.dataframe(
                             pivot_df_top.style.format("{:,.2f}").background_gradient(cmap=theme["table_cmap"], axis=None),
                             height=600,
-                            use_container_width=True,
+                            width="stretch",
                         )
                         st.markdown(
                             f"<div class='print-only print-table'>{pivot_df_top.to_html()}</div>",
@@ -2062,12 +2062,12 @@ try:
                             color_discrete_sequence=theme["qualitative"],
                         )
                         fig_stacked.update_layout(xaxis_title="Clients (Top 20)", yaxis_title="Tonnage (T)", barmode='stack', hovermode="x unified")
-                        st.plotly_chart(apply_plotly_style(fig_stacked), use_container_width=True)
+                        st.plotly_chart(apply_plotly_style(fig_stacked), width="stretch")
 
         # --- Base de données Brute ---
         st.markdown("---")
         with st.expander(" Voir les données détaillées brutes"):
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, width="stretch")
             
     else:
         st.warning("Veuillez charger un fichier Excel (.xls, .xlsx) depuis le panneau de gauche.")
