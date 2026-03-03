@@ -1,7 +1,7 @@
-﻿import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+import faulthandler
+faulthandler.enable()
+print("[carriboard] boot app_carriere.py (pre-imports)", flush=True)
+
 import os
 import io
 import math
@@ -9,12 +9,21 @@ import re
 import secrets
 from uuid import uuid4
 import html
+import sys
+import importlib.util
 from typing import Optional
 from pathlib import Path
 from datetime import datetime
+
+print("[carriboard] importing streamlit…", flush=True)
+import streamlit as st
+print("[carriboard] importing pandas…", flush=True)
+import pandas as pd
+print("[carriboard] importing plotly…", flush=True)
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit.components.v1 as components
-import importlib.util
-import sys
+print(f"[carriboard] python={sys.version.split()[0]} streamlit={getattr(st, '__version__', '?')}", flush=True)
 
 
 def _load_local_module(py_filename: str, module_name: str):
@@ -207,6 +216,7 @@ def _pick_data_root(app_dir: Path) -> Path:
 
 
 DATA_ROOT = _pick_data_root(APP_DIR)
+print(f"[carriboard] DATA_ROOT={DATA_ROOT}", flush=True)
 AUTH_DB_PATH = DATA_ROOT / "users.sqlite3"
 auth.init_db(AUTH_DB_PATH)
 
