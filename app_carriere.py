@@ -18,6 +18,7 @@ from datetime import datetime
 
 import streamlit as st
 import pandas as pd
+import requests
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit.components.v1 as components
@@ -1029,7 +1030,58 @@ def load_data(file_path, clean_version: str = DATA_CLEAN_VERSION, sheet_name=0):
     return df, col_mapping
 
 dossier_app = os.path.dirname(os.path.abspath(__file__))
-fichier_defaut = os.path.join(dossier_app, "extraction pont bsacule retraité.xlsx")
+
+DEFAULT_EXTRACTION_SOURCE_NAME = "extraction pont bascule retraité.xlsx"
+
+
+def _get_default_extraction_url() -> Optional[str]:
+    raw = (os.environ.get("CARRIBOARD_DEFAULT_EXTRACTION_URL") or "").strip()
+    if raw:
+        return raw
+    try:
+        raw = str(st.secrets.get("CARRIBOARD_DEFAULT_EXTRACTION_URL") or "").strip()  # type: ignore[attr-defined]
+    except Exception:
+        raw = ""
+    return raw or None
+
+
+@st.cache_resource
+def _resolve_default_extraction_path() -> Path:
+    candidates = [
+        Path(dossier_app) / "extraction pont bascule retraité.xlsx",
+        Path(dossier_app) / "extraction pont bsacule retraité.xlsx",
+    ]
+    for p in candidates:
+        try:
+            if p.exists():
+                return p
+        except Exception:
+            continue
+
+    # Sur Streamlit Cloud, le fichier n'est pas commité (il est ignoré par .gitignore).
+    # On le récupère via une URL (secret/env) et on le stocke dans DATA_ROOT.
+    dst = DATA_ROOT / "default_extraction.xlsx"
+    try:
+        if dst.exists():
+            return dst
+    except Exception:
+        pass
+
+    url = _get_default_extraction_url()
+    if url:
+        try:
+            r = requests.get(url, timeout=35)
+            r.raise_for_status()
+            content = r.content or b""
+            if len(content) >= 1024:
+                dst.write_bytes(content)
+        except Exception:
+            pass
+
+    return dst if dst.exists() else candidates[0]
+
+
+fichier_defaut = str(_resolve_default_extraction_path())
 
 user = st.session_state.auth_user
 st.sidebar.markdown(
@@ -1263,9 +1315,9 @@ def _ensure_default_project_if_needed() -> None:
         PROJECT_DB_PATH,
         project_id=project_id,
         user_id=user_id,
-        name="Extraction (par défaut)",
+        name="Extraction pont bascule retraité",
         data_path=str(fichier_defaut),
-        source_filename=os.path.basename(fichier_defaut),
+        source_filename=DEFAULT_EXTRACTION_SOURCE_NAME,
         date_min=stats.get("date_min"),
         date_max=stats.get("date_max"),
         nb_livraisons=stats.get("nb_livraisons"),
