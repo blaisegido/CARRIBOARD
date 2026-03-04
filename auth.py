@@ -36,7 +36,7 @@ def _normalize_username(username: str) -> tuple[str, str]:
         raise AuthError("Nom d'utilisateur requis.")
     if len(u) < 3 or len(u) > 50:
         raise AuthError("Le nom d'utilisateur doit faire entre 3 et 50 caractères.")
-    # Allow letters/numbers/space and a few separators.
+    # Autorise lettres/chiffres/espaces + quelques séparateurs.
     if not re.fullmatch(r"[A-Za-z0-9 _.\-]+", u):
         raise AuthError("Caractères invalides dans le nom d'utilisateur.")
     return u, u.casefold()

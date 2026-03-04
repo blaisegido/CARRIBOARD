@@ -79,7 +79,7 @@ def _project_from_row(row: sqlite3.Row) -> Project:
     data = dict(row)
     fields = set(Project.__dataclass_fields__.keys())
     filtered = {k: v for k, v in data.items() if k in fields}
-    # Backward/forward compatibility: allow missing optional fields.
+    # Compatibilité ascendante/descendante : autorise l'absence de champs optionnels.
     if "name_canon" in fields and "name_canon" not in filtered:
         filtered["name_canon"] = str(filtered.get("name", "")).casefold()
     return Project(**filtered)
@@ -242,3 +242,14 @@ def update_project_data(
                 str(project_id),
             ),
         )
+
+
+def delete_project(db_path: Path, *, user_id: int, project_id: str) -> None:
+    init_db(db_path)
+    with _connect(db_path) as con:
+        cur = con.execute(
+            "DELETE FROM projects WHERE user_id = ? AND id = ?",
+            (int(user_id), str(project_id)),
+        )
+        if cur.rowcount == 0:
+            raise ProjectError("Dossier introuvable.")

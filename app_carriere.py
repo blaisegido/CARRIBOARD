@@ -1,12 +1,13 @@
 import faulthandler
 faulthandler.enable()
-print("[carriboard] boot app_carriere.py (pre-imports)", flush=True)
 
 import os
+import shutil
 import io
 import math
 import re
 import secrets
+import json
 from uuid import uuid4
 import html
 import sys
@@ -15,15 +16,11 @@ from typing import Optional
 from pathlib import Path
 from datetime import datetime
 
-print("[carriboard] importing streamlit…", flush=True)
 import streamlit as st
-print("[carriboard] importing pandas…", flush=True)
 import pandas as pd
-print("[carriboard] importing plotly…", flush=True)
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit.components.v1 as components
-print(f"[carriboard] python={sys.version.split()[0]} streamlit={getattr(st, '__version__', '?')}", flush=True)
 
 
 def _load_local_module(py_filename: str, module_name: str):
@@ -32,42 +29,42 @@ def _load_local_module(py_filename: str, module_name: str):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Impossible de charger {py_filename}.")
     mod = importlib.util.module_from_spec(spec)
-    # Register to ensure consistent module identity and clearer tracebacks.
+    # Enregistre le module : identité cohérente + tracebacks plus clairs.
     sys.modules[module_name] = mod
     spec.loader.exec_module(mod)
     return mod
 
 
-# Force the local modules (avoid collisions with site-packages packages named "auth"/"projects").
+# Force le chargement des modules locaux (évite les collisions avec des paquets installés nommés "auth"/"projects").
 auth = _load_local_module("auth.py", "carriboard_auth")
 projects = _load_local_module("projects.py", "carriboard_projects")
 
-# Bump this value to invalidate Streamlit cache when cleaning rules change.
+# Incrémenter cette valeur pour invalider le cache Streamlit quand les règles de nettoyage changent.
 DATA_CLEAN_VERSION = "2026-03-02-01"
 
 def normalize_text_series(series: pd.Series, kind: Optional[str] = None) -> pd.Series:
     s = series.astype("string")
     s = s.str.normalize("NFKC")
-    s = s.str.replace(r"[\u0000-\u001F\u007F-\u009F]", "", regex=True)  # control chars
+    s = s.str.replace(r"[\u0000-\u001F\u007F-\u009F]", "", regex=True)  # caractères de contrôle
     s = s.str.replace(
         r"[\u200B-\u200F\u202A-\u202E\u2060-\u2069\u061C\uFEFF]",
         "",
         regex=True,
-    )  # invisible/format chars (bidi, zero-width, etc.)
-    s = s.str.replace("\u00A0", " ", regex=False)  # NBSP
-    s = s.str.replace("\u202F", " ", regex=False)  # narrow NBSP
+    )  # caractères invisibles/de formatage (bidi, zéro‑largeur, etc.)
+    s = s.str.replace("\u00A0", " ", regex=False)  # espace insécable
+    s = s.str.replace("\u202F", " ", regex=False)  # espace insécable étroit
     s = s.str.replace(r"[’‘´`ʹʻ]", "'", regex=True)  # apostrophes
-    s = s.str.replace(r"[‐‑‒–—―−﹣－]", "-", regex=True)  # hyphens/minus
+    s = s.str.replace(r"[‐‑‒–—―−﹣－]", "-", regex=True)  # tirets / signe moins
 
     if kind == "client":
-        # Harmonise common separators so the same client doesn't appear twice
-        # (e.g. "RB TRAVAUX" vs "RB-TRAVAUX", "ITB/RDP" vs "ITBRDP").
+        # Harmonise les séparateurs courants pour éviter les doublons de libellés client.
+        # (ex. "RB TRAVAUX" vs "RB-TRAVAUX", "ITB/RDP" vs "ITBRDP").
         s = s.str.replace(r"[-/_]", " ", regex=True)
         s = s.str.replace(r"[.,]", " ", regex=True)
         s = s.str.replace(r"\bINDUTRIES\b", "INDUSTRIES", regex=True)
 
     if kind == "mois":
-        # Standardise months labels (including common mojibake seen in some Excels)
+        # Standardise les libellés de mois (inclut les erreurs d'encodage fréquentes dans certains Excels)
         s = s.str.casefold()
         month_map = {
             "<na>": pd.NA,
@@ -99,7 +96,7 @@ def normalize_text_series(series: pd.Series, kind: Optional[str] = None) -> pd.S
     s = s.str.replace(r"\s+", " ", regex=True).str.strip()
 
     if kind == "client":
-        # Canonicalise remaining variants by picking the most frequent label per key
+        # Canonicalise les variantes restantes en gardant le libellé le plus fréquent par clé
         # (key ignores separators/spaces/case).
         key = s.fillna("").str.replace(r"[\s\-_/\.,']", "", regex=True).str.casefold()
         tmp = pd.DataFrame({"key": key, "val": s})
@@ -138,13 +135,16 @@ def apply_plotly_style(fig, *, kind: str = "default"):
         )
         if kind == "pie":
             fig.update_layout(
-                height=380,
+                height=520,
                 legend=dict(
-                    orientation="h",
-                    yanchor="top",
-                    y=-0.06,
-                    xanchor="left",
-                    x=0,
+                    orientation="v",
+                    yanchor="middle",
+                    y=0.5,
+                    xanchor="right",
+                    x=1.0,
+                    bgcolor="rgba(255,255,255,0.75)",
+                    bordercolor="rgba(0,0,0,0.08)",
+                    borderwidth=1,
                     font=dict(size=11),
                 ),
             )
@@ -177,7 +177,7 @@ THEMES = [
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Tableau de Bord - Carrière",
+    page_title="Tableau de Bord",
     page_icon="",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -195,14 +195,20 @@ def _pick_data_root(app_dir: Path) -> Path:
         except Exception:
             data_dir_raw = ""
 
-    preferred = Path(data_dir_raw).expanduser() if data_dir_raw else (app_dir / "data")
-    fallbacks = [
-        preferred,
-        Path.home() / ".carriboard" / "data",
-        Path("/tmp") / "carriboard" / "data",
-    ]
+    # Si explicitement fourni, on l'utilise tel quel (recommandé sur Streamlit Cloud).
+    if data_dir_raw:
+        preferred = Path(data_dir_raw).expanduser()
+        candidates = [preferred]
+    else:
+        # Évite d'écrire dans le dossier du dépôt sur Streamlit Cloud :
+        # cela peut déclencher le file-watcher et provoquer des relances en boucle.
+        candidates = [
+            Path.home() / ".carriboard" / "data",
+            Path("/tmp") / "carriboard" / "data",
+            app_dir / "data",
+        ]
 
-    for candidate in fallbacks:
+    for candidate in candidates:
         try:
             candidate.mkdir(parents=True, exist_ok=True)
             probe = candidate / ".write_test"
@@ -212,13 +218,24 @@ def _pick_data_root(app_dir: Path) -> Path:
         except Exception:
             continue
 
-    return preferred
+    return (app_dir / "data")
 
 
-DATA_ROOT = _pick_data_root(APP_DIR)
-print(f"[carriboard] DATA_ROOT={DATA_ROOT}", flush=True)
+@st.cache_resource
+def _data_root_cached() -> Path:
+    return _pick_data_root(APP_DIR)
+
+
+DATA_ROOT = _data_root_cached()
 AUTH_DB_PATH = DATA_ROOT / "users.sqlite3"
-auth.init_db(AUTH_DB_PATH)
+
+
+@st.cache_resource
+def _auth_db_ready(db_path: Path) -> None:
+    auth.init_db(db_path)
+
+
+_auth_db_ready(AUTH_DB_PATH)
 
 
 def _qp_read() -> dict:
@@ -418,7 +435,7 @@ if st.session_state.auth_user is None:
 # Bandeau (visible par tous les utilisateurs connectés)
 st.markdown(
     """
-    <div style="
+    <div id="top-banner-wrap" style="
         background:#F2F2F2;
         border:1px solid #E0E0E0;
         padding:10px 12px;
@@ -466,7 +483,7 @@ st.markdown(
       }
       *, *::before, *::after { box-sizing: border-box; }
 
-      /* Main container: max width + comfortable padding */
+      /* Conteneur principal : largeur max + marges confortables */
       div.block-container {
         max-width: 1400px;
         padding-left: 24px;
@@ -476,14 +493,14 @@ st.markdown(
         div.block-container { padding-left: 16px; padding-right: 16px; }
       }
 
-      /* Typography */
+      /* Typographie */
       h1 { font-size: 1.6rem; line-height: 1.2; }
       h2 { font-size: 1.35rem; }
       h3 { font-size: 1.15rem; }
       p, li, label, .stMarkdown, .stText { font-size: 1rem; }
       small, .stCaption, .stCaptionContainer { font-size: 0.875rem; color: var(--muted); }
 
-      /* Click targets */
+      /* Zones cliquables */
       div[data-testid="stButton"] > button,
       div[data-testid="stDownloadButton"] > button,
       div[data-testid="stPopover"] > button {
@@ -503,10 +520,10 @@ st.markdown(
         color: #ffffff;
       }
 
-      /* Section spacing */
+      /* Espacement des sections */
       hr { margin: 18px 0; border-color: var(--border); }
 
-      /* KPI visuals */
+      /* Visuels des indicateurs */
       .kpi-title { font-size: 1.25rem; font-weight: 800; color: var(--text); margin-top: 1rem; margin-bottom: .5rem; }
       .kpi-val { font-size: 1.6rem; color: var(--accent); font-weight: 800; }
       .kpi-box {
@@ -518,7 +535,7 @@ st.markdown(
         margin-bottom: 12px;
       }
 
-      /* KPI grid (custom, avoids truncation) */
+      /* Grille des indicateurs (sur-mesure, évite la troncature) */
       .kpi-grid {
         display: grid;
         grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -551,7 +568,7 @@ st.markdown(
         overflow-wrap: anywhere;
       }
 
-      /* DataFrames: keep inside container (no page-level horizontal scroll) */
+      /* DataFrames : rester dans le conteneur (pas de scroll horizontal global) */
       div[data-testid="stDataFrame"] { max-width: 100%; width: 100%; }
       div[data-testid="stDataFrame"] > div { max-width: 100%; width: 100%; overflow-x: auto; }
       div[data-testid="stDataFrame"] [role="gridcell"] > div {
@@ -560,7 +577,7 @@ st.markdown(
         line-height: 1.2;
       }
 
-      /* Screen vs print helpers */
+      /* Helpers écran vs impression */
       .print-only { display: none; }
       .screen-only { display: inline; }
       @media print {
@@ -570,14 +587,19 @@ st.markdown(
         div[data-testid="stDataFrame"] > div { overflow: visible !important; }
       }
 
-      /* Print-friendly tables */
-      .print-table { margin-top: 10px; }
+      /* Tableaux adaptés à l'impression */
+      .print-table { margin-top: 10px; overflow: visible; }
       .print-table table { width: 100%; border-collapse: collapse; table-layout: fixed; }
       .print-table th, .print-table td { border: 1px solid #d1d5db; padding: 4px 6px; font-size: 11px; }
       .print-table th { background: #f3f4f6; font-weight: 800; }
       .print-table td { word-break: break-word; }
+      @media print {
+        .print-table table { page-break-inside: auto; }
+        .print-table thead { display: table-header-group; }
+        .print-table tr { page-break-inside: avoid; page-break-after: auto; }
+      }
 
-      /* Metric cards */
+      /* Cartes de métriques */
       div[data-testid="metric-container"] {
         background-color: var(--surface);
         border: 1px solid var(--border);
@@ -596,11 +618,144 @@ st.markdown(
         overflow-wrap: anywhere;
       }
 
-      /* Avoid accidental horizontal scroll */
+      /* Évite le scroll horizontal accidentel */
       .stApp { overflow-x: hidden; }
     </style>
     """,
     unsafe_allow_html=True,
+)
+
+components.html(
+    """
+    <script>
+    (function () {
+      try {
+        const doc = window.parent && window.parent.document;
+        if (!doc || !doc.body) return;
+
+        const replacements = [
+          // Import de fichier
+          ["Drag and drop file here", "Glissez-déposez le fichier ici"],
+          ["Drag and drop files here", "Glissez-déposez les fichiers ici"],
+          ["Drag and drop file", "Glissez-déposez le fichier"],
+          ["Drag and drop files", "Glissez-déposez les fichiers"],
+          ["Browse files", "Parcourir les fichiers"],
+          ["Browse file", "Parcourir les fichiers"],
+          ["No file selected", "Aucun fichier sélectionné"],
+          ["Remove file", "Retirer le fichier"],
+          ["Remove", "Retirer"],
+          ["Clear", "Effacer"],
+
+          // DataFrame / info-bulles UI (Streamlit)
+          ["Search", "Rechercher"],
+          ["Download data as CSV", "Télécharger en CSV"],
+          ["Download as CSV", "Télécharger en CSV"],
+          ["Download CSV", "Télécharger en CSV"],
+          ["Download", "Télécharger"],
+          ["Copy", "Copier"],
+          ["Fullscreen", "Plein écran"],
+          ["Expand", "Agrandir"],
+
+          // Barre d'outils Plotly (si affichée)
+          ["Download plot as a png", "Télécharger le graphique en PNG"],
+          ["Zoom in", "Zoom avant"],
+          ["Zoom out", "Zoom arrière"],
+          ["Pan", "Déplacer"],
+          ["Zoom", "Zoom"],
+          ["Autoscale", "Ajuster automatiquement"],
+          ["Reset axes", "Réinitialiser les axes"],
+          ["Box Select", "Sélection rectangle"],
+          ["Lasso Select", "Sélection lasso"],
+        ];
+
+        function translateValue(v) {
+          if (!v) return v;
+          let out = String(v);
+          for (const [a, b] of replacements) {
+            if (out.includes(a)) out = out.split(a).join(b);
+          }
+          out = out.replace(/\bor\b/gi, "ou");
+          out = out.replace(
+            /Limit\\s+(\\d+(?:\\.\\d+)?\\s*[KMG]B)\\s+per\\s+file/gi,
+            (m, sz) => {
+              const fr = String(sz)
+                .replace(/GB/gi, "Go")
+                .replace(/MB/gi, "Mo")
+                .replace(/KB/gi, "Ko");
+              return `Limite : ${fr} par fichier`;
+            }
+          );
+          out = out.replace(
+            /Limit\\s+(\\d+(?:\\.\\d+)?)\\s*([KMG]B)\\s+per\\s+file/gi,
+            (m, n, u) => {
+              const unit = String(u)
+                .replace(/GB/gi, "Go")
+                .replace(/MB/gi, "Mo")
+                .replace(/KB/gi, "Ko");
+              return `Limite : ${n} ${unit} par fichier`;
+            }
+          );
+          return out;
+        }
+
+        const SHOW_TEXT = (doc.defaultView && doc.defaultView.NodeFilter)
+          ? doc.defaultView.NodeFilter.SHOW_TEXT
+          : 4;
+
+        function translateIn(root) {
+          if (!root) return;
+          const walker = doc.createTreeWalker(root, SHOW_TEXT);
+          let node = null;
+          while ((node = walker.nextNode())) {
+            const t = node.nodeValue;
+            if (!t || !t.trim()) continue;
+            if (node.parentElement) {
+              try {
+                if (node.parentElement.closest("table, svg")) continue;
+              } catch (e) {}
+            }
+
+            const out = translateValue(t);
+            if (out !== t) node.nodeValue = out;
+          }
+
+          try {
+            const attrEls = root.querySelectorAll("[title],[aria-label],[placeholder],[data-title]");
+            for (const el of Array.from(attrEls)) {
+              for (const attr of ["title", "aria-label", "placeholder", "data-title"]) {
+                const v = el.getAttribute(attr);
+                if (!v) continue;
+                const out = translateValue(v);
+                if (out !== v) el.setAttribute(attr, out);
+              }
+            }
+          } catch (e) {}
+        }
+
+        function run() {
+          try { translateIn(doc.body); } catch (e) {}
+        }
+
+        let scheduled = false;
+        function schedule() {
+          if (scheduled) return;
+          scheduled = true;
+          setTimeout(() => {
+            scheduled = false;
+            try { run(); } catch (e) {}
+          }, 50);
+        }
+
+        schedule();
+        try {
+          const obs = new MutationObserver(schedule);
+          obs.observe(doc.body, { childList: true, subtree: true, characterData: true });
+        } catch (e) {}
+      } catch (e) {}
+    })();
+    </script>
+    """,
+    height=0,
 )
 
 # Fonction pour générer le fichier Excel en mémoire
@@ -626,10 +781,10 @@ def generate_excel_download(df, stats_df, mapping):
         money_fmt = workbook.add_format({'num_format': '#,##0 "€"'})
         
         # 1. --- ONGLET SYNTHESE ---
-        ws_synth = workbook.add_worksheet(' Synthèse Dashboard')
+        ws_synth = workbook.add_worksheet("Synthèse - Tableau de bord")
         ws_synth.write(0, 0, "TABLEAU DE BORD - SYNTHÈSE DES LIVRAISONS", title_fmt)
         
-        # Layout des KPIs (2 lignes, 3 colonnes)
+        # Layout des indicateurs (2 lignes, 3 colonnes)
         for i, row in stats_df.iterrows():
             r = 2 + (i // 3) * 2
             c = (i % 3) * 2
@@ -647,11 +802,11 @@ def generate_excel_download(df, stats_df, mapping):
             for col_num, value in enumerate(df_prod.columns.values):
                 ws.write(2, col_num, value, header_fmt)
             
-            # Data Bars for Tonnage
+            # Barres de données pour le tonnage
             ws.conditional_format(3, 1, 3 + len(df_prod), 1, {
                 'type': 'data_bar', 'bar_color': '#FFA07A'
             })
-            # Data Bars for CA
+            # Barres de données pour le chiffre d'affaires
             ws.conditional_format(3, 2, 3 + len(df_prod), 2, {
                 'type': 'data_bar', 'bar_color': '#FFB347'
             })
@@ -668,8 +823,8 @@ def generate_excel_download(df, stats_df, mapping):
             for col_num, value in enumerate(df_client.columns.values):
                 ws.write(2, col_num, value, header_fmt)
             
-            # Data Bars
-            ws.conditional_format(3, 1, 3 + len(df_client), 1, {'type': 'data_bar', 'bar_color': '#87CEEB'}) # Blue like Streamlit
+            # Barres de données
+            ws.conditional_format(3, 1, 3 + len(df_client), 1, {'type': 'data_bar', 'bar_color': '#87CEEB'}) # Bleu (style Streamlit)
             ws.conditional_format(3, 2, 3 + len(df_client), 2, {'type': 'data_bar', 'bar_color': '#FF8C00'}) # Orange
             ws.set_column('A:A', 30)
             ws.set_column('B:C', 18, num_fmt)
@@ -683,7 +838,7 @@ def generate_excel_download(df, stats_df, mapping):
             ws = writer.sheets[' Matrice Client-Produit']
             ws.write(0, 0, "MATRICE DE LIVRAISON (en tonnes)", title_fmt)
             
-            # Heatmap color scale
+            # Échelle de couleurs (carte de chaleur)
             ws.conditional_format(3, 1, 3 + len(pivot_df), len(pivot_df.columns), {
                 'type': '2_color_scale', 'min_color': "#FFFFFF", 'max_color': "#FF4500"
             })
@@ -697,7 +852,7 @@ def generate_excel_download(df, stats_df, mapping):
             if mois_col in df_ev.columns:
                 df_ev[mois_col] = df_ev[mois_col].str.lower()
                 pivot_ev = pd.pivot_table(df_ev, values=poids_col, index=mois_col, columns=produit_col, aggfunc='sum', fill_value=0)
-                # Reorder index
+                # Réordonner l'index
                 existing_months = [m for m in months_order if m in pivot_ev.index]
                 pivot_ev = pivot_ev.reindex(existing_months)
                 pivot_ev.to_excel(writer, sheet_name=' Évolution Mensuelle', startrow=2)
@@ -714,6 +869,47 @@ def generate_excel_download(df, stats_df, mapping):
 
     processed_data = output.getvalue()
     return processed_data
+
+
+def _normalize_ticket_for_dedup(series: pd.Series) -> pd.Series:
+    s = series.astype("string").str.strip()
+    s = s.str.replace(r"\.0$", "", regex=True)
+    s = s.str.casefold()
+    return s.where(s.notna() & s.ne("") & s.ne("nan"))
+
+
+def _drop_exact_duplicates(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    before = int(len(df))
+    try:
+        out = df.drop_duplicates(ignore_index=True)
+    except TypeError:
+        try:
+            hashes = pd.util.hash_pandas_object(df, index=False)
+            out = df.loc[~hashes.duplicated(keep="first")].copy()
+            out.reset_index(drop=True, inplace=True)
+        except Exception:
+            out = df.copy()
+    return out, before - int(len(out))
+
+
+def _drop_duplicates_by_ticket(df: pd.DataFrame, ticket_col: str | None) -> tuple[pd.DataFrame, int]:
+    if not ticket_col or ticket_col not in df.columns:
+        return df, 0
+    ticket = _normalize_ticket_for_dedup(df[ticket_col])
+    dup_mask = ticket.notna() & ticket.duplicated(keep="first")
+    removed = int(dup_mask.sum())
+    if not removed:
+        return df, 0
+    out = df.loc[~dup_mask].copy()
+    out.reset_index(drop=True, inplace=True)
+    return out, removed
+
+
+def _hash_rows(df: pd.DataFrame) -> pd.Series | None:
+    try:
+        return pd.util.hash_pandas_object(df, index=False)
+    except Exception:
+        return None
 
 
 # Fonction de chargement et de nettoyage des données
@@ -788,7 +984,7 @@ def load_data(file_path, clean_version: str = DATA_CLEAN_VERSION, sheet_name=0):
         df[col_mapping['date']] = pd.to_datetime(df[col_mapping['date']], errors='coerce')
         df['Année'] = df[col_mapping['date']].dt.year
         df['Trimestre'] = 'T' + df[col_mapping['date']].dt.quarter.astype(str)
-        # Add week number
+        # Ajout du numéro de semaine
         df['Semaine'] = df[col_mapping['date']].dt.isocalendar().week
         
         months_fr = {
@@ -826,6 +1022,9 @@ def load_data(file_path, clean_version: str = DATA_CLEAN_VERSION, sheet_name=0):
         df[col_mapping['ca']] = pd.to_numeric(df[col_mapping['ca']], errors='coerce').fillna(0)
     if 'poids' in col_mapping:
         df[col_mapping['poids']] = pd.to_numeric(df[col_mapping['poids']], errors='coerce').fillna(0)
+
+    # Évite de propager les doublons dès l'import (lignes strictement identiques).
+    df, _ = _drop_exact_duplicates(df)
         
     return df, col_mapping
 
@@ -889,7 +1088,14 @@ if (os.environ.get("CARRIBOARD_DEBUG") or "").strip() == "1" or _qp_get_first("d
 
 PROJECT_DB_PATH = DATA_ROOT / "projects.sqlite3"
 PROJECT_FILES_DIR = DATA_ROOT / "project_files"
-projects.init_db(PROJECT_DB_PATH)
+
+
+@st.cache_resource
+def _projects_db_ready(db_path: Path) -> None:
+    projects.init_db(db_path)
+
+
+_projects_db_ready(PROJECT_DB_PATH)
 
 user_id = int(st.session_state.auth_user.id)
 
@@ -897,6 +1103,8 @@ if "active_project_id" not in st.session_state:
     st.session_state.active_project_id = None
 if "rename_project_id" not in st.session_state:
     st.session_state.rename_project_id = None
+if "delete_project_id" not in st.session_state:
+    st.session_state.delete_project_id = None
 if "sidebar_upload_counter" not in st.session_state:
     st.session_state.sidebar_upload_counter = 0
 if "top_upload_counter" not in st.session_state:
@@ -905,6 +1113,8 @@ if "show_top_uploader" not in st.session_state:
     st.session_state.show_top_uploader = False
 if "project_search" not in st.session_state:
     st.session_state.project_search = ""
+if "close_extractions_popover" not in st.session_state:
+    st.session_state.close_extractions_popover = False
 
 
 def _safe_stem(filename: str) -> str:
@@ -1057,7 +1267,7 @@ def _ensure_default_project_if_needed() -> None:
 
 _ensure_default_project_if_needed()
 
-# Sidebar upload -> creates a new "dossier" for this user
+# Import dans la barre latérale → crée une nouvelle extraction pour ce compte
 uploaded_file = st.sidebar.file_uploader(
     " Charger une extraction (Excel ou CSV)",
     type=["xls", "xlsx", "xlsm", "csv"],
@@ -1074,7 +1284,7 @@ if uploaded_file is not None:
     _qp_set(t=tok, p=new_id)
     st.rerun()
 
-# Projects list (for the top bar)
+# Liste des extractions (pour la barre du haut)
 all_projects = projects.list_projects(PROJECT_DB_PATH, user_id)
 if not st.session_state.active_project_id:
     requested = _qp_get_first("p")
@@ -1233,6 +1443,17 @@ with bar_right:
     btn_c1, btn_c2 = st.columns(2, vertical_alignment="center")
     with btn_c1:
         with st.popover("Voir les extractions", width="stretch"):
+            st.markdown(
+                """
+                <style>
+                  /* Rendre les boutons icônes discrets */
+                  div[data-testid="stPopoverBody"] button[kind="secondary"] {
+                    color: #667085 !important;
+                  }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
             st.markdown("**Sélectionner une extraction**")
             search_val = st.text_input(
                 "Rechercher",
@@ -1263,26 +1484,90 @@ with bar_right:
                         ton = float(p.tonnage_total or 0.0)
                         ca = float(p.ca_total or 0.0)
                         st.caption(f"{nb} liv • {ton:,.0f} T • {_human_money(ca)}".replace(",", " "))
-                        if st.button(
-                            (p.name or "(Sans nom)") + (" (actif)" if is_active else ""),
-                            key=f"pick_project_{p.id}",
-                            type="primary" if is_active else "secondary",
-                            width="stretch",
-                        ):
-                            st.session_state.active_project_id = p.id
-                            st.session_state.rename_project_id = None
-                            tok = st.session_state.auth_token or _qp_get_first("t")
-                            _qp_set(t=tok, p=p.id)
-                            st.rerun()
 
-            st.divider()
-            if active_project and st.button("Renommer l'extraction active", width="stretch"):
-                st.session_state.rename_project_id = active_project.id
-                st.rerun()
+                        a1, a2, a3 = st.columns([8, 1, 1])
+                        with a1:
+                            if st.button(
+                                (p.name or "(Sans nom)") + (" (actif)" if is_active else ""),
+                                key=f"pick_project_{p.id}",
+                                type="primary" if is_active else "secondary",
+                                width="stretch",
+                            ):
+                                st.session_state.active_project_id = p.id
+                                st.session_state.rename_project_id = None
+                                st.session_state.delete_project_id = None
+                                st.session_state.close_extractions_popover = True
+                                tok = st.session_state.auth_token or _qp_get_first("t")
+                                _qp_set(t=tok, p=p.id)
+                                st.rerun()
+                        with a2:
+                            if st.button("✎", key=f"rename_project_{p.id}", width="content", help="Renommer"):
+                                st.session_state.active_project_id = p.id
+                                st.session_state.rename_project_id = p.id
+                                st.session_state.delete_project_id = None
+                                st.session_state.close_extractions_popover = True
+                                tok = st.session_state.auth_token or _qp_get_first("t")
+                                _qp_set(t=tok, p=p.id)
+                                st.rerun()
+                        with a3:
+                            if st.button("🗑", key=f"delete_project_{p.id}", width="content", help="Supprimer"):
+                                st.session_state.delete_project_id = p.id
+                                st.session_state.rename_project_id = None
+                                st.session_state.close_extractions_popover = True
+                                st.rerun()
 
     with btn_c2:
-        if st.button("＋ Nouvelle extraction", type="primary", width="stretch"):
+        if st.button("+ Nouvelle extraction", type="primary", width="stretch"):
             st.session_state.show_top_uploader = not bool(st.session_state.show_top_uploader)
+
+if st.session_state.close_extractions_popover:
+    components.html(
+        """
+        <script>
+        (() => {
+          const MAX_TRIES = 15;
+          let tries = 0;
+
+          function attemptClose() {
+            tries += 1;
+            try {
+              const doc = window.parent?.document;
+              if (!doc) return;
+
+              const buttons = Array.from(doc.querySelectorAll("button"));
+              const toggle = buttons.find((b) =>
+                ((b.textContent || "").trim().includes("Voir les extractions")) &&
+                (b.getAttribute("aria-haspopup") || b.getAttribute("aria-expanded") !== null)
+              );
+
+              if (toggle && toggle.getAttribute("aria-expanded") === "true") {
+                toggle.click();
+                return;
+              }
+
+              // Repli : tente de fermer le popover ouvert via la touche Échap.
+              const esc = new KeyboardEvent("keydown", {
+                key: "Escape",
+                code: "Escape",
+                keyCode: 27,
+                which: 27,
+                bubbles: true,
+              });
+              doc.dispatchEvent(esc);
+            } catch (e) {}
+
+            if (tries < MAX_TRIES) {
+              setTimeout(attemptClose, 100);
+            }
+          }
+
+          setTimeout(attemptClose, 0);
+        })();
+        </script>
+        """,
+        height=0,
+    )
+    st.session_state.close_extractions_popover = False
 
 if st.session_state.show_top_uploader:
     top_file = st.file_uploader(
@@ -1304,6 +1589,54 @@ if st.session_state.show_top_uploader:
         st.rerun()
 
 active_project = projects.get_project(PROJECT_DB_PATH, user_id, st.session_state.active_project_id) if st.session_state.active_project_id else None
+
+if st.session_state.delete_project_id:
+    target = projects.get_project(PROJECT_DB_PATH, user_id, st.session_state.delete_project_id)
+    if target is None:
+        st.session_state.delete_project_id = None
+    else:
+        st.error(f"Suppression d'extraction : **{target.name}**")
+        st.caption("⚠️ Cette action est irréversible : l'extraction sera supprimée de la liste et ses fichiers uploadés seront effacés.")
+        confirm_text = st.text_input("Tapez SUPPRIMER pour confirmer", value="", key=f"delete_confirm_{target.id}")
+        dc1, dc2 = st.columns(2)
+        with dc1:
+            confirm_delete = st.button(
+                "Supprimer définitivement",
+                type="primary",
+                width="stretch",
+                disabled=(confirm_text or "").strip().casefold() != "supprimer",
+            )
+        with dc2:
+            cancel_delete = st.button("Annuler", width="stretch")
+
+        if confirm_delete:
+            try:
+                projects.delete_project(PROJECT_DB_PATH, user_id=user_id, project_id=target.id)
+            except projects.ProjectError as e:
+                st.error(str(e))
+            else:
+                # Nettoyage des fichiers importés quand ils sont stockés sous PROJECT_FILES_DIR
+                try:
+                    project_dir = PROJECT_FILES_DIR / f"user_{user_id}" / target.id
+                    if project_dir.exists():
+                        shutil.rmtree(project_dir, ignore_errors=True)
+                except Exception:
+                    pass
+
+                if st.session_state.active_project_id == target.id:
+                    st.session_state.active_project_id = None
+                    st.session_state.pop("local_data_source", None)
+
+                st.session_state.rename_project_id = None
+                st.session_state.delete_project_id = None
+                tok = st.session_state.auth_token or _qp_get_first("t")
+                _qp_set(t=tok, p=st.session_state.active_project_id)
+                st.toast("Extraction supprimée.")
+                st.rerun()
+
+        if cancel_delete:
+            st.session_state.delete_project_id = None
+            st.rerun()
 
 if active_project and st.session_state.rename_project_id == active_project.id:
     with st.form("rename_project_form", clear_on_submit=False):
@@ -1341,41 +1674,109 @@ components.html(
     (function() {{
       const BTN_ID = "pdf-gen-btn";
       const STYLE_ID = "pdf-gen-style";
-      const label = "Générer PDF";
-      const bg = "{theme["primary"]}";
+      const label = "PDF";
       const actionsId = "top-banner-actions";
 
-      function ensureStyle() {{
-        let style = window.parent.document.getElementById(STYLE_ID);
-        if (!style) {{
-          style = window.parent.document.createElement("style");
-          style.id = STYLE_ID;
-          window.parent.document.head.appendChild(style);
-        }}
-        style.textContent = `
-          @media print {{
-            @page {{ size: A4 landscape; margin: 10mm; }}
-            #${{BTN_ID}} {{ display: none !important; }}
-            section[data-testid="stSidebar"] {{ display: none !important; }}
-            header[data-testid="stHeader"] {{ display: none !important; }}
-            div[data-testid="stToolbar"] {{ display: none !important; }}
-            div[data-testid="stDecoration"] {{ display: none !important; }}
-            div.block-container {{ padding-top: 0 !important; }}
-            * {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
-            div[data-testid="stDataFrame"] {{ width: 100% !important; max-width: 100% !important; }}
-            div[data-testid="stDataFrame"] > div {{ overflow: visible !important; }}
-            div[data-testid="stPlotlyChart"], .stPlotlyChart, .js-plotly-plot {{
-              break-inside: avoid !important;
-              page-break-inside: avoid !important;
+       function ensureStyle() {{
+         let style = window.parent.document.getElementById(STYLE_ID);
+         if (!style) {{
+           style = window.parent.document.createElement("style");
+           style.id = STYLE_ID;
+           window.parent.document.head.appendChild(style);
+         }}
+         style.textContent = `
+           body[data-pdf-capture="1"] section[data-testid="stSidebar"] {{ display: none !important; }}
+           body[data-pdf-capture="1"] header[data-testid="stHeader"] {{ display: none !important; }}
+           body[data-pdf-capture="1"] div[data-testid="stToolbar"] {{ display: none !important; }}
+           body[data-pdf-capture="1"] div[data-testid="stElementToolbar"] {{ display: none !important; }}
+           body[data-pdf-capture="1"] div[data-testid="stDecoration"] {{ display: none !important; }}
+           body[data-pdf-capture="1"] footer {{ display: none !important; }}
+           body[data-pdf-capture="1"] #top-banner-wrap {{ display: none !important; }}
+           body[data-pdf-capture="1"] [data-pdf-hide="1"] {{ display: none !important; }}
+             body[data-pdf-capture="1"] #${{BTN_ID}} {{ display: none !important; }}
+             body[data-pdf-capture="1"] div.block-container {{ padding-top: 0 !important; max-width: none !important; }}
+             body[data-pdf-capture="1"] div[data-testid="stElementContainer"] {{ overflow: visible !important; }}
+             body[data-pdf-capture="1"] div[data-testid="stHorizontalBlock"] {{ flex-wrap: wrap !important; gap: 18px !important; }}
+             body[data-pdf-capture="1"] div[data-testid="column"] {{ width: 100% !important; flex: 1 1 100% !important; min-width: 0 !important; }}
+             body[data-pdf-capture="1"] .print-only {{ display: block !important; }}
+             body[data-pdf-capture="1"] .screen-only {{ display: none !important; }}
+             /* PDF : graphiques + diagrammes (garde les tableaux \"print-only\") */
+             body[data-pdf-capture="1"] div[data-testid="stDataFrame"] {{ display: none !important; }}
+             body[data-pdf-capture="1"] div[data-testid="stTable"] {{ display: none !important; }}
+             body[data-pdf-capture="1"] .print-table {{ display: block !important; }}
+
+            body[data-pdf-capture="1"] div[data-testid="stTabs"] {{ overflow: visible !important; }}
+            body[data-pdf-capture="1"] [data-baseweb="tab-panel"] {{ overflow: visible !important; }}
+            /* PDF : afficher tous les onglets (pour inclure tous les graphiques) */
+            body[data-pdf-capture="1"][data-pdf-all-tabs="1"] [data-pdf-scope="1"] div[data-testid="stTabs"] [role="tablist"] {{ display: none !important; }}
+            body[data-pdf-capture="1"][data-pdf-all-tabs="1"] [data-pdf-scope="1"] [data-baseweb="tab-panel"] {{ display: block !important; }}
+            body[data-pdf-capture="1"][data-pdf-all-tabs="1"] [data-pdf-scope="1"] [data-baseweb="tab-panel"][hidden] {{ display: block !important; }}
+            /* Exception : certains switchers (ex: Tonnage/CA) ne doivent pas être "dépliés" */
+            body[data-pdf-capture="1"][data-pdf-all-tabs="1"] [data-pdf-scope="1"] div[data-testid="stTabs"][data-pdf-no-expand="1"] [data-baseweb="tab-panel"][hidden] {{ display: none !important; }}
+            body[data-pdf-capture="1"] div[data-testid="stPlotlyChart"], body[data-pdf-capture="1"] .stPlotlyChart {{ overflow: visible !important; }}
+            body[data-pdf-capture="1"] div[data-testid="stPlotlyChart"] > div, body[data-pdf-capture="1"] .stPlotlyChart > div {{ overflow: visible !important; height: auto !important; max-height: none !important; }}
+            body[data-pdf-capture="1"] .modebar, body[data-pdf-capture="1"] .plotly-notifier, body[data-pdf-capture="1"] .hoverlayer {{ display: none !important; }}
+            /* Ne masque Plotly "live" que si les images statiques ont bien été créées */
+            body[data-pdf-capture="1"][data-pdf-plots="1"] .print-plotly-wrapper {{ display: block !important; }}
+            body[data-pdf-capture="1"][data-pdf-plots="1"] .js-plotly-plot {{ display: none !important; }}
+            @media print {{
+              @page {{ size: A4 landscape; margin: 10mm; }}
+              #${{BTN_ID}} {{ display: none !important; }}
+              section[data-testid="stSidebar"] {{ display: none !important; }}
+              header[data-testid="stHeader"] {{ display: none !important; }}
+             div[data-testid="stToolbar"] {{ display: none !important; }}
+              div[data-testid="stElementToolbar"] {{ display: none !important; }}
+               div[data-testid="stDecoration"] {{ display: none !important; }}
+               footer {{ display: none !important; }}
+               #top-banner-wrap {{ display: none !important; }}
+              [data-pdf-hide="1"] {{ display: none !important; }}
+              div.block-container {{ padding-top: 0 !important; max-width: none !important; }}
+              div[data-testid="stElementContainer"] {{ overflow: visible !important; }}
+              * {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+              div[data-testid="stHorizontalBlock"] {{ flex-wrap: wrap !important; gap: 18px !important; }}
+              div[data-testid="column"] {{ width: 100% !important; flex: 1 1 100% !important; min-width: 0 !important; }}
+              /* PDF : graphiques uniquement */
+              div[data-testid="stDataFrame"], div[data-testid="stTable"] {{ display: none !important; }}
+              div[data-testid="stTabs"], [data-baseweb="tab-panel"] {{ overflow: visible !important; }}
+              div[data-testid="stTabs"] [role="tablist"] {{ display: none !important; }}
+              /* PDF : afficher tous les onglets (pour inclure tous les graphiques) */
+              body[data-pdf-all-tabs="1"] [data-pdf-scope="1"] div[data-testid="stTabs"] [role="tablist"] {{ display: none !important; }}
+              body[data-pdf-all-tabs="1"] [data-pdf-scope="1"] [data-baseweb="tab-panel"] {{ display: block !important; }}
+              body[data-pdf-all-tabs="1"] [data-pdf-scope="1"] [data-baseweb="tab-panel"][hidden] {{ display: block !important; }}
+              /* Exception : certains switchers (ex: Tonnage/CA) ne doivent pas être "dépliés" */
+              body[data-pdf-all-tabs="1"] [data-pdf-scope="1"] div[data-testid="stTabs"][data-pdf-no-expand="1"] [data-baseweb="tab-panel"][hidden] {{ display: none !important; }}
+              div[data-testid="stPlotlyChart"], .stPlotlyChart, .js-plotly-plot {{
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+              }}
+              .print-plotly-wrapper img {{
+                max-height: 175mm !important;
+                object-fit: contain !important;
+              }}
+             div[data-testid="stPlotlyChart"] > div, .stPlotlyChart > div {{
+               overflow: visible !important;
+               height: auto !important;
+               max-height: none !important;
+             }}
+             .modebar, .plotly-notifier, .hoverlayer {{ display: none !important; }}
+              /* Si des images statiques Plotly ont été préparées, on imprime celles-ci. */
+              body[data-pdf-plots="1"] .print-plotly-wrapper {{ display: block !important; }}
+              body[data-pdf-plots="1"] .js-plotly-plot {{ display: none !important; }}
+           }}
+            .print-plotly-wrapper {{ display: none; width: 100%; }}
+            .print-plotly-wrapper .print-plot-caption {{
+              margin: 0 0 6px 0;
+              font-size: 12px;
+              font-weight: 700;
+              color: #344054;
             }}
-            div[data-testid="stPlotlyChart"] > div, .stPlotlyChart > div {{
-              overflow: visible !important;
+            .print-plotly-wrapper img {{
+              width: 100% !important;
+              max-width: 100% !important;
               height: auto !important;
-              max-height: none !important;
             }}
-          }}
-        `;
-      }}
+         `;
+       }}
 
       function ensureButton() {{
         let btn = window.parent.document.getElementById(BTN_ID);
@@ -1384,22 +1785,830 @@ components.html(
           btn.id = BTN_ID;
           btn.type = "button";
           btn.innerText = label;
-          btn.title = "Imprimer / enregistrer en PDF (état actuel de la page)";
-          btn.onclick = function() {{
-            try {{ window.parent.print(); }} catch (e) {{ try {{ window.print(); }} catch (e2) {{}} }}
+          btn.title = "Imprimer / Enregistrer en PDF (graphiques et diagrammes). Pour supprimer l'URL en bas : désactivez « En-têtes et pieds de page » dans l'impression.";
+
+          const state = {{
+            busy: false,
+            wrappers: [],
           }};
+
+           function cleanupPdf(doc) {{
+             try {{ doc.body.removeAttribute("data-pdf-plots"); }} catch (e) {{}}
+             try {{ doc.body.removeAttribute("data-pdf-all-tabs"); }} catch (e) {{}}
+             try {{ doc.body.removeAttribute("data-pdf-capture"); }} catch (e) {{}}
+             try {{
+               Array.from(doc.querySelectorAll("[data-pdf-scope='1']")).forEach((el) => {{
+                 try {{ el.removeAttribute("data-pdf-scope"); }} catch (e) {{}}
+               }});
+             }} catch (e) {{}}
+             try {{
+               Array.from(doc.querySelectorAll("div[data-testid='stTabs'][data-pdf-no-expand='1']")).forEach((el) => {{
+                 try {{ el.removeAttribute("data-pdf-no-expand"); }} catch (e) {{}}
+               }});
+             }} catch (e) {{}}
+            try {{
+              Array.from(doc.querySelectorAll("[data-pdf-hide='1']")).forEach((el) => {{
+                try {{ el.removeAttribute("data-pdf-hide"); }} catch (e) {{}}
+              }});
+            }} catch (e) {{}}
+            try {{
+              state.wrappers.forEach((w) => {{ try {{ w.remove(); }} catch (e) {{}} }});
+              state.wrappers = [];
+            }} catch (e) {{}}
+            try {{
+              Array.from(doc.querySelectorAll(".js-plotly-plot")).forEach((p) => {{
+                try {{
+                  if (p.dataset && p.dataset.pdfPrepared) delete p.dataset.pdfPrepared;
+                }} catch (e) {{}}
+              }});
+             }} catch (e) {{}}
+
+             // Cache la section "Données" (brutes/filtrées) : jamais dans le PDF
+             try {{
+               const norm = (s) => {{
+                 try {{
+                   return String(s || "")
+                     .normalize("NFD")
+                     .replace(/[\\u0300-\\u036f]/g, "")
+                     .replace(/\\s+/g, " ")
+                     .trim()
+                     .toLowerCase();
+                 }} catch (e) {{
+                   return String(s || "").replace(/\\s+/g, " ").trim().toLowerCase();
+                 }}
+               }};
+
+               // 1) cache l'onglet (st.tabs) des données brutes/filtrées
+               const tabs = Array.from(doc.querySelectorAll("div[data-testid='stTabs']"));
+               for (const t of tabs) {{
+                 const txt = norm(t.textContent || "");
+                 const isRawTabs = txt.includes("brutes (complet)") && txt.includes("filtrees");
+                 if (isRawTabs) t.setAttribute("data-pdf-hide", "1");
+               }}
+
+               // 2) cache le titre "Données" juste au-dessus (si présent)
+               const heads = Array.from(doc.querySelectorAll("h1, h2, h3, h4, h5"));
+               for (const h of heads) {{
+                 if (norm(h.textContent || "") === "donnees") {{
+                   const box = h.closest("div[data-testid='stElementContainer']") || h.closest("div");
+                   if (box) box.setAttribute("data-pdf-hide", "1");
+                 }}
+               }}
+             }} catch (e) {{}}
+           }}
+
+          function sleep(ms) {{
+            return new Promise((resolve) => setTimeout(resolve, ms));
+          }}
+
+          async function waitForVisiblePlots(doc, rootWin) {{
+            try {{
+              for (let i = 0; i < 12; i += 1) {{
+                const plots = Array.from(doc.querySelectorAll(".js-plotly-plot"));
+                let visible = 0;
+                let ready = 0;
+                for (const p of plots) {{
+                  const r = p.getBoundingClientRect ? p.getBoundingClientRect() : null;
+                  if (!r || r.width < 50 || r.height < 50) continue;
+                  visible += 1;
+                  if (r.width >= 240 && r.height >= 240) ready += 1;
+                }}
+                if (visible === 0 || ready === visible) return;
+                try {{ rootWin.dispatchEvent(new Event("resize")); }} catch (e) {{}}
+                await sleep(120);
+              }}
+            }} catch (e) {{}}
+          }}
+
+          async function ensureDashboardTab(doc, rootWin) {{
+            try {{
+              const tabs = Array.from(doc.querySelectorAll("[role='tab']"));
+              const dash = tabs.find((t) =>
+                String(t.textContent || "").replace(/\\s+/g, " ").trim().toLowerCase().includes("tableau de bord")
+              );
+              if (dash && dash.getAttribute("aria-selected") !== "true") {{
+                dash.click();
+                await sleep(220);
+                try {{ rootWin.dispatchEvent(new Event("resize")); }} catch (e) {{}}
+                await sleep(160);
+              }}
+            }} catch (e) {{}}
+          }}
+
+          async function warmUpAllTabsInScope(doc, rootWin) {{
+            // Objectif : cliquer automatiquement sur tous les onglets (st.tabs)
+            // afin que Streamlit rende tous les contenus (et donc tous les graphiques) au moins une fois.
+            try {{
+              const scopes = Array.from(doc.querySelectorAll("[data-pdf-scope='1']"));
+              const roots = scopes.length ? scopes : [doc.querySelector("div[data-testid='stMain']") || doc.body];
+
+              const seen = new Set();
+              const norm = (s) => {{
+                try {{
+                  return String(s || "")
+                    .normalize("NFD")
+                    .replace(/[\\u0300-\\u036f]/g, "")
+                    .replace(/[^a-zA-Z0-9]+/g, " ")
+                    .replace(/\\s+/g, " ")
+                    .trim()
+                    .toLowerCase();
+                }} catch (e) {{
+                  return String(s || "").replace(/\\s+/g, " ").trim().toLowerCase();
+                }}
+              }};
+
+              // Réveille les onglets principaux (Tableau de bord / Analyses détaillées) si Streamlit rend les panels à la demande.
+              const clickTopTab = async (needle) => {{
+                try {{
+                  const allTabs = Array.from(doc.querySelectorAll("[role='tab']"));
+                  const t = allTabs.find((el) => norm(el.textContent).includes(needle));
+                  if (t && t.getAttribute("aria-selected") !== "true") {{
+                    t.click();
+                    await sleep(320);
+                    try {{ rootWin.dispatchEvent(new Event("resize")); }} catch (e) {{}}
+                    await sleep(180);
+                  }}
+                }} catch (e) {{}}
+              }};
+              await clickTopTab("analyses detaillees");
+              await clickTopTab("tableau de bord");
+
+              for (const root of roots) {{
+                const tablists = Array.from(root.querySelectorAll("[role='tablist']"));
+                for (const tablist of tablists) {{
+                  const tabs = Array.from(tablist.querySelectorAll("[role='tab']"));
+
+                  // Cas spécial : onglet switcher "Tonnage / Chiffre d'affaires" (Graphique 3)
+                  // -> on ne force pas le rendu des 2 pour éviter l'impression en double.
+                  try {{
+                    if (tabs.length === 2) {{
+                      const a = norm(tabs[0]?.textContent);
+                      const b = norm(tabs[1]?.textContent);
+                      const hasTonnage = a.includes("tonnage") || b.includes("tonnage");
+                      const hasCa = a.includes("chiffre d affaires") || b.includes("chiffre d affaires");
+                      if (hasTonnage && hasCa) continue;
+                    }}
+                  }} catch (e) {{}}
+
+                  for (const t of tabs) {{
+                    const key = t.getAttribute("aria-controls") || t.id || (t.textContent || "");
+                    const sk = String(key || "");
+                    if (!sk) continue;
+                    // Évite de recliquer indéfiniment la même tab (plusieurs scopes peuvent la contenir).
+                    if (seen.has(sk)) continue;
+                    seen.add(sk);
+
+                    try {{
+                      if (t.getAttribute("aria-selected") !== "true") t.click();
+                    }} catch (e) {{}}
+
+                    await sleep(260);
+                    try {{ rootWin.dispatchEvent(new Event("resize")); }} catch (e) {{}}
+                    await sleep(160);
+                  }}
+                }}
+              }}
+            }} catch (e) {{}}
+          }}
+
+          function getMainNode(doc) {{
+            return (
+              doc.querySelector("div.block-container") ||
+              doc.querySelector("div[data-testid='stMain']") ||
+               doc.body
+             );
+           }}
+
+           function getAvoidRanges(main) {{
+             const mainRect = main.getBoundingClientRect();
+             const selectors = [
+               ".print-plotly-wrapper",
+               "div[data-testid='stDataFrame']",
+               "div[data-testid='stPlotlyChart']",
+               "div[data-testid='stTabs']",
+             ].join(",");
+             const ranges = [];
+             try {{
+               for (const el of Array.from(main.querySelectorAll(selectors))) {{
+                 const r = el.getBoundingClientRect();
+                 const top = Math.max(0, Math.floor(r.top - mainRect.top));
+                 const bottom = Math.max(top + 1, Math.ceil(r.bottom - mainRect.top));
+                 if (bottom - top < 60) continue;
+                 ranges.push({{ top, bottom }});
+               }}
+             }} catch (e) {{
+               try {{
+                 const rw = window.top || window.parent || window;
+                 const msg = String((e && e.message) || e || "");
+                 if (msg.includes("popup_blocked")) {{
+                   try {{ rw.alert("Fenetre bloquee par le navigateur. Autorisez les popups pour generer le PDF."); }} catch (e2) {{}}
+                 }} else {{
+                   try {{ rw.alert("Erreur lors de la generation du PDF. Actualisez la page et reessayez."); }} catch (e2) {{}}
+                 }}
+               }} catch (e2) {{}}
+             }}
+             ranges.sort((a, b) => a.top - b.top);
+             return ranges;
+           }}
+
+           function adjustedSliceHeight(y, baseH, totalH, ranges) {{
+             let h = Math.min(baseH, totalH - y);
+             const cut = y + h;
+             const minH = 220;
+             const pad = 14;
+             try {{
+               for (const r of ranges) {{
+                 if (r.top + pad < cut && r.bottom - pad > cut) {{
+                   const before = Math.max(0, r.top - y - pad);
+                   if (before >= minH) {{
+                     h = Math.min(h, before);
+                   }} else {{
+                     const after = Math.max(0, r.bottom - y + pad);
+                     const maxGrow = Math.max(minH, Math.floor(baseH * 1.35));
+                     if (after <= maxGrow) h = Math.max(h, after);
+                   }}
+                   break;
+                 }}
+                 try {{ pw.close(); }} catch (e) {{}}
+                 try {{ rootWin.alert("Aucun graphique n'a pu etre exporte. Actualisez la page et reessayez."); }} catch (e) {{}}
+               }}
+             }} catch (e) {{}}
+             h = Math.min(h, totalH - y);
+             return Math.max(minH, Math.floor(h));
+           }}
+
+           function loadScriptOnce(doc, src, checkFn) {{
+             return new Promise((resolve, reject) => {{
+               try {{
+                 if (checkFn && checkFn()) return resolve(true);
+                 const existing = Array.from(doc.querySelectorAll("script")).find((s) => s.src === src);
+                if (existing) {{
+                  existing.addEventListener("load", () => resolve(true), {{ once: true }});
+                  setTimeout(() => resolve(true), 1500);
+                  return;
+                }}
+                const s = doc.createElement("script");
+                s.src = src;
+                s.async = true;
+                s.onload = () => resolve(true);
+                s.onerror = () => reject(new Error("Failed to load " + src));
+                doc.head.appendChild(s);
+              }} catch (e) {{
+                reject(e);
+              }}
+            }});
+          }}
+
+          async function ensurePdfLibs(doc, rootWin) {{
+            const hasHtml2Canvas = () => !!rootWin.html2canvas;
+            const hasJsPdf = () => !!(rootWin.jspdf && rootWin.jspdf.jsPDF);
+
+            await loadScriptOnce(
+              doc,
+              "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js",
+              hasHtml2Canvas
+            );
+            await loadScriptOnce(
+              doc,
+              "https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js",
+              hasJsPdf
+            );
+
+            return {{
+              html2canvas: rootWin.html2canvas,
+              jsPDF: rootWin.jspdf.jsPDF,
+            }};
+          }}
+
+            function _getPdfScopeRoots(doc) {{
+              try {{
+                const roots = Array.from(doc.querySelectorAll("[data-pdf-scope='1']"));
+                return roots.length ? roots : [doc.body];
+              }} catch (e) {{
+                return [doc.body];
+              }}
+            }}
+
+            function getPdfVisualInfo(doc) {{
+              const roots = _getPdfScopeRoots(doc);
+              const view = doc?.defaultView || window;
+              const isVisible = (el) => {{
+                try {{
+                  const cs = view.getComputedStyle ? view.getComputedStyle(el) : null;
+                  if (cs && (cs.display === "none" || cs.visibility === "hidden")) return false;
+                  const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+                  if (!r) return true;
+                  if (r.width < 50 || r.height < 50) return false;
+                  return true;
+                }} catch (e) {{
+                  return true;
+                }}
+              }};
+
+              let plotly = 0;
+              try {{
+                const els = roots.flatMap((r) => Array.from(r.querySelectorAll(".js-plotly-plot")));
+                plotly = els.filter(isVisible).length;
+              }} catch (e) {{}}
+
+              let other = 0;
+              const otherSelectors = [
+                "div[data-testid='stVegaLiteChart']",
+                "div[data-testid='stPyplot']",
+                "div[data-testid='stGraphvizChart']",
+                "div[data-testid='stDeckGlJsonChart']",
+                "div[data-testid='stImage'] img",
+              ];
+              for (const sel of otherSelectors) {{
+                try {{
+                  const els = roots.flatMap((r) => Array.from(r.querySelectorAll(sel)));
+                  if (els.some(isVisible)) other += 1;
+                }} catch (e) {{}}
+              }}
+
+              return {{ plotly, other, total: plotly + other }};
+            }}
+
+            async function preparePlotlyImages(doc, rootWin) {{
+              let Plotly = rootWin?.Plotly || doc?.defaultView?.Plotly || window?.Plotly;
+              if (!Plotly) {{
+                // Streamlit charge parfois Plotly après le rendu des éléments : on attend un peu.
+                for (let k = 0; k < 18; k += 1) {{
+                  try {{ await sleep(120); }} catch (e) {{}}
+                  Plotly = rootWin?.Plotly || doc?.defaultView?.Plotly || window?.Plotly;
+                  if (Plotly) break;
+                }}
+              }}
+              if (!Plotly || !Plotly.toImage) return false;
+
+              const scopes = Array.from(doc.querySelectorAll("[data-pdf-scope='1']"));
+              const plots = scopes.length
+                ? scopes.flatMap((el) => Array.from(el.querySelectorAll(".js-plotly-plot")))
+                : Array.from(doc.querySelectorAll(".js-plotly-plot"));
+              let created = 0;
+              const createdImgs = [];
+              const seenUrls = new Set();
+
+              const escapeSel = (s) => {{
+                try {{
+                  if (window.CSS && CSS.escape) return CSS.escape(String(s));
+                }} catch (e) {{}}
+                return String(s).replace(/[^a-zA-Z0-9_\\-]/g, "\\\\$&");
+              }};
+
+              const getTabContextLabel = (plot) => {{
+                try {{
+                  const panel = plot.closest("[data-baseweb='tab-panel']");
+                  if (!panel || !panel.id) return "";
+                  const q = `[role='tab'][aria-controls='${{escapeSel(panel.id)}}']`;
+                  const tab = doc.querySelector(q);
+                  const txt = String(tab ? tab.textContent : "").replace(/\\s+/g, " ").trim();
+                  const low = txt.toLowerCase();
+                  if (!txt) return "";
+                  // Ignore les grands onglets principaux (inutile de répéter sur chaque graphique)
+                  if (low.includes("tableau de bord")) return "";
+                  if (low.includes("analyses détaillées") || low.includes("analyses detaillees")) return "";
+                  if (low.includes("mise à jour") || low.includes("mise a jour")) return "";
+                  return txt;
+                }} catch (e) {{
+                  return "";
+                }}
+              }};
+
+              for (const plot of plots) {{
+                // Évite les doublons pendant la même exécution.
+                if (plot.dataset && plot.dataset.pdfPrepared === "1") continue;
+
+                try {{
+                  // N'imprime que les graphiques visibles sur la page courante.
+                  try {{
+                    const view = doc?.defaultView || rootWin || window;
+                    const cs = view.getComputedStyle ? view.getComputedStyle(plot) : null;
+                    if (cs && (cs.display === "none" || cs.visibility === "hidden")) continue;
+                    const rect0 = plot.getBoundingClientRect ? plot.getBoundingClientRect() : null;
+                    if (rect0 && (rect0.width < 50 || rect0.height < 50)) continue;
+                  }} catch (e) {{}}
+
+                  try {{
+                    if (Plotly.Plots && Plotly.Plots.resize) await Plotly.Plots.resize(plot);
+                  }} catch (e) {{}}
+
+                  let w = null;
+                  let h = null;
+                  try {{
+                    const fl = plot._fullLayout;
+                    if (fl && fl.width && fl.height) {{
+                      w = Math.max(200, Math.round(fl.width));
+                      h = Math.max(200, Math.round(fl.height));
+                    }}
+                  }} catch (e) {{}}
+
+                  if (!w || !h) {{
+                    const rect = plot.getBoundingClientRect ? plot.getBoundingClientRect() : null;
+                    if (rect && (rect.width < 50 || rect.height < 50)) continue;
+                    w = rect && rect.width ? Math.max(200, Math.round(rect.width)) : null;
+                    h = rect && rect.height ? Math.max(200, Math.round(rect.height)) : null;
+                  }}
+                 const opts = {{ format: "png", scale: 2 }};
+                 if (w && h) {{
+                   opts.width = w;
+                   opts.height = h;
+                 }}
+
+                  const url = await Plotly.toImage(plot, opts);
+                  if (!url) continue;
+                  // Évite les doublons (certains onglets peuvent produire la même image).
+                  if (seenUrls.has(url)) {{
+                    try {{ if (plot.dataset) plot.dataset.pdfPrepared = "1"; }} catch (e) {{}}
+                    continue;
+                  }}
+                  seenUrls.add(url);
+
+                  const wrapper = doc.createElement("div");
+                  wrapper.className = "print-plotly-wrapper";
+                  wrapper.style.breakInside = "avoid";
+                  wrapper.style.pageBreakInside = "avoid";
+
+                  const ctx = getTabContextLabel(plot);
+                  if (ctx) {{
+                    const cap = doc.createElement("div");
+                    cap.className = "print-plot-caption";
+                    cap.textContent = ctx;
+                    wrapper.appendChild(cap);
+                  }}
+
+                  const img = doc.createElement("img");
+                  img.src = url;
+                  img.alt = "Graphique";
+                  wrapper.appendChild(img);
+                 createdImgs.push(img);
+
+                 const parent = plot.parentElement;
+                 if (parent) {{
+                   parent.insertBefore(wrapper, plot);
+                   state.wrappers.push(wrapper);
+                   if (plot.dataset) plot.dataset.pdfPrepared = "1";
+                   created += 1;
+                 }}
+               }} catch (e) {{}}
+             }}
+
+             if (created > 0) {{
+               try {{
+                 await Promise.all(
+                   createdImgs.map(async (img) => {{
+                     try {{
+                       if (img.decode) await img.decode();
+                       else if (!img.complete) await new Promise((r) => {{ img.onload = () => r(true); setTimeout(() => r(true), 500); }});
+                     }} catch (e) {{}}
+                   }})
+                 );
+               }} catch (e) {{}}
+               try {{ doc.body.setAttribute("data-pdf-plots", "1"); }} catch (e) {{}}
+               return true;
+             }}
+             return false;
+           }}
+
+           async function collectPlotlyImages(doc, rootWin, state, btn) {{
+             let Plotly = rootWin?.Plotly || doc?.defaultView?.Plotly || window?.Plotly;
+             if (!Plotly) {{
+               // Streamlit charge parfois Plotly après le rendu des éléments : on attend un peu.
+               for (let k = 0; k < 18; k += 1) {{
+                 try {{ await sleep(120); }} catch (e) {{}}
+                 Plotly = rootWin?.Plotly || doc?.defaultView?.Plotly || window?.Plotly;
+                 if (Plotly) break;
+               }}
+             }}
+             if (!Plotly || !Plotly.toImage) return [];
+
+             const view = doc?.defaultView || rootWin || window;
+             const isVisible = (el) => {{
+               try {{
+                 const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+                 if (!r || r.width < 50 || r.height < 50) return false;
+                 const cs = view.getComputedStyle ? view.getComputedStyle(el) : null;
+                 if (!cs) return true;
+                 if (cs.display === "none" || cs.visibility === "hidden") return false;
+                 return true;
+               }} catch (e) {{
+                 return true;
+               }}
+             }};
+
+             const plots = Array.from(doc.querySelectorAll("div[data-testid='stMain'] .js-plotly-plot")).filter(isVisible);
+             const out = [];
+
+             for (let i = 0; i < plots.length; i += 1) {{
+               const plot = plots[i];
+               if (!plot) continue;
+
+               try {{
+                 if (btn) btn.innerText = `Export (${{
+                   Math.min(i + 1, plots.length)
+                 }}/${{
+                   plots.length
+                 }})…`;
+
+                 try {{
+                   if (Plotly.Plots && Plotly.Plots.resize) await Plotly.Plots.resize(plot);
+                 }} catch (e) {{}}
+
+                 let w = 1600;
+                 let h = 1000;
+                 try {{
+                   const r = plot.getBoundingClientRect();
+                   if (r && r.width && r.height) {{
+                     w = Math.max(w, Math.round(r.width));
+                     h = Math.max(h, Math.round(r.height));
+                   }}
+                 }} catch (e) {{}}
+                 try {{
+                   const fl = plot._fullLayout;
+                   if (fl && fl.width && fl.height) {{
+                     w = Math.max(w, Math.round(fl.width));
+                     h = Math.max(h, Math.round(fl.height));
+                   }}
+                 }} catch (e) {{}}
+                 w = Math.min(2400, w);
+                 h = Math.min(1600, h);
+
+                 let url = null;
+                 try {{
+                   url = await Plotly.toImage(plot, {{ format: "png", scale: 2, width: w, height: h }});
+                 }} catch (e) {{}}
+                 if (!url) {{
+                   try {{ await sleep(160); }} catch (e) {{}}
+                   try {{
+                     url = await Plotly.toImage(plot, {{ format: "png", scale: 2, width: w, height: h }});
+                   }} catch (e) {{}}
+                 }}
+                 if (!url) {{
+                   try {{ await sleep(220); }} catch (e) {{}}
+                   try {{
+                     url = await Plotly.toImage(plot, {{ format: "png", scale: 2, width: w, height: h }});
+                   }} catch (e) {{}}
+                 }}
+                 if (!url) continue;
+
+                let title = "";
+                try {{
+                  const fl = plot._fullLayout;
+                  const t = fl && fl.title && fl.title.text ? String(fl.title.text) : "";
+                  title = (t || "").replace(/<[^>]*>/g, "").trim();
+                }} catch (e) {{}}
+
+                out.push({{ title, url }});
+                try {{ await sleep(40); }} catch (e) {{}}
+              }} catch (e) {{}}
+            }}
+
+            if (btn) btn.innerText = "PDF";
+            return out;
+          }}
+
+           function markPdfHiddenNodes(doc) {{
+            // Cache la barre "Extraction active / Voir les extractions / + Nouvelle extraction"
+            try {{
+              const blocks = Array.from(doc.querySelectorAll("div[data-testid='stHorizontalBlock']"));
+              for (const block of blocks) {{
+                const t = (block.textContent || "").replace(/\\s+/g, " ").trim().toLowerCase();
+                const isProjectBar =
+                  t.includes("extraction active") &&
+                  (t.includes("voir les extractions") || t.includes("nouvelle extraction"));
+                if (isProjectBar) block.setAttribute("data-pdf-hide", "1");
+              }}
+            }} catch (e) {{}}
+
+            // Repli : repère les boutons et cache leur ligne.
+            try {{
+              const btns = Array.from(doc.querySelectorAll("button"));
+              for (const b of btns) {{
+                const txt = ((b.textContent || "").replace(/\\s+/g, " ").trim().toLowerCase());
+                if (!txt) continue;
+                if (txt.includes("voir les extractions") || txt.includes("nouvelle extraction")) {{
+                  const row = b.closest("div[data-testid='stHorizontalBlock']");
+                  if (row) row.setAttribute("data-pdf-hide", "1");
+                }}
+              }}
+            }} catch (e) {{}}
+          }}
+
+          function setPdfScopeToDashboardPanel(doc) {{
+            try {{
+              // Nettoie l'ancien scope (si relance).
+              Array.from(doc.querySelectorAll("[data-pdf-scope='1']")).forEach((el) => {{
+                try {{ el.removeAttribute("data-pdf-scope"); }} catch (e) {{}}
+              }});
+            }} catch (e) {{}}
+
+            try {{
+              const main = doc.querySelector("div[data-testid='stMain']") || doc.body;
+              const norm = (s) => {{
+                try {{
+                  return String(s || "")
+                    .normalize("NFD")
+                    .replace(/[\\u0300-\\u036f]/g, "")
+                    .replace(/\\s+/g, " ")
+                    .trim()
+                    .toLowerCase();
+                }} catch (e) {{
+                  return String(s || "").replace(/\\s+/g, " ").trim().toLowerCase();
+                }}
+              }};
+
+              // Repère le "tablist" principal (Tableau de bord / Analyses détaillées / Mise à jour…)
+              const tablists = Array.from(main.querySelectorAll("[role='tablist']"));
+              let best = null;
+              let bestScore = -1;
+              for (const tl of tablists) {{
+                const tabs = Array.from(tl.querySelectorAll("[role='tab']"));
+                if (tabs.length < 2) continue;
+                const texts = tabs.map((t) => norm(t.textContent));
+                const hasDash = texts.some((t) => t.includes("tableau de bord"));
+                const hasAnalyses = texts.some((t) => t.includes("analyses detaillees") || t.includes("analyses détaillées"));
+                const hasUpdate = texts.some((t) => t.includes("mise a jour") || t.includes("mise à jour") || t.includes("tableur"));
+                const score = (hasDash ? 1 : 0) + (hasAnalyses ? 1 : 0) + (hasUpdate ? 1 : 0);
+                if (score > bestScore) {{
+                  bestScore = score;
+                  best = tl;
+                }}
+              }}
+              if (!best || bestScore <= 0) return false;
+
+              const tabs = Array.from(best.querySelectorAll("[role='tab']"));
+              const selected = tabs.find((t) => t.getAttribute("aria-selected") === "true") || tabs[0];
+              const panelId = selected ? selected.getAttribute("aria-controls") : null;
+              const panel = panelId ? doc.getElementById(panelId) : null;
+              if (!panel) return false;
+
+              panel.setAttribute("data-pdf-scope", "1");
+              return true;
+            }} catch (e) {{}}
+
+            return false;
+          }}
+
+          function markPdfNoExpandTabGroups(doc) {{
+            const norm = (s) => {{
+              try {{
+                return String(s || "")
+                  .normalize("NFD")
+                  .replace(/[\\u0300-\\u036f]/g, "")
+                  .replace(/[^a-zA-Z0-9]+/g, " ")
+                  .replace(/\\s+/g, " ")
+                  .trim()
+                  .toLowerCase();
+              }} catch (e) {{
+                return String(s || "").replace(/\\s+/g, " ").trim().toLowerCase();
+              }}
+            }};
+
+            try {{
+              // Nettoyage (si relance)
+              Array.from(doc.querySelectorAll("div[data-testid='stTabs'][data-pdf-no-expand='1']")).forEach((el) => {{
+                try {{ el.removeAttribute("data-pdf-no-expand"); }} catch (e) {{}}
+              }});
+            }} catch (e) {{}}
+
+            try {{
+              const scopes = Array.from(doc.querySelectorAll("[data-pdf-scope='1']"));
+              const roots = scopes.length ? scopes : [doc.querySelector("div[data-testid='stMain']") || doc.body];
+              for (const root of roots) {{
+                const tablists = Array.from(root.querySelectorAll("[role='tablist']"));
+                for (const tablist of tablists) {{
+                  const tabs = Array.from(tablist.querySelectorAll("[role='tab']"));
+                  if (tabs.length !== 2) continue;
+                  const a = norm(tabs[0]?.textContent);
+                  const b = norm(tabs[1]?.textContent);
+                  const hasTonnage = a.includes("tonnage") || b.includes("tonnage");
+                  const hasCa = a.includes("chiffre d affaires") || b.includes("chiffre d affaires");
+                  if (!(hasTonnage && hasCa)) continue;
+                  const stTabs = tablist.closest("div[data-testid='stTabs']");
+                  if (stTabs) stTabs.setAttribute("data-pdf-no-expand", "1");
+                }}
+              }}
+            }} catch (e) {{}}
+          }}
+
+          function _stripSensitiveParamsFromUrl(rootWin) {{
+            try {{
+              const original = String(rootWin.location.href || "");
+              const url = new URL(original);
+              const keys = ["t", "p", "token", "auth", "session"];
+              let changed = false;
+              for (const k of keys) {{
+                if (url.searchParams.has(k)) {{
+                  url.searchParams.delete(k);
+                  changed = true;
+                }}
+              }}
+              if (!changed) return null;
+              rootWin.history.replaceState(null, "", url.toString());
+              return original;
+            }} catch (e) {{
+              return null;
+            }}
+          }}
+
+          function _restoreUrl(rootWin, original) {{
+            try {{
+              if (!original) return;
+              rootWin.history.replaceState(null, "", String(original));
+            }} catch (e) {{}}
+          }}
+
+           btn.onclick = async function() {{
+             if (state.busy) return;
+             state.busy = true;
+
+             const prevLabel = btn.innerText;
+             btn.innerText = "Préparation…";
+             btn.disabled = true;
+
+             try {{
+               const rootWin = window.top || window.parent || window;
+                const doc = rootWin.document || window.parent.document;
+                const main = getMainNode(doc);
+
+                // Mode "capture" (style tableau de bord) :
+                // - masque les éléments UI superflus
+                // - remplace les graphiques Plotly par des images statiques
+                // - ouvre la fenêtre d'impression du navigateur
+               cleanupPdf(doc);
+               markPdfHiddenNodes(doc);
+                try {{ doc.body.setAttribute("data-pdf-capture", "1"); }} catch (e) {{}}
+                const inDash = setPdfScopeToDashboardPanel(doc);
+                if (!inDash) {{
+                  try {{ cleanupPdf(doc); }} catch (e) {{}}
+                  try {{ rootWin.alert("Impossible de repérer les zones à imprimer. Actualisez la page et réessayez."); }} catch (e) {{}}
+                  return;
+                }}
+                try {{ rootWin.dispatchEvent(new Event("resize")); }} catch (e) {{}}
+                await sleep(220);
+                await waitForVisiblePlots(doc, rootWin);
+
+                btn.innerText = "Préparation de l'impression…";
+                const vis = getPdfVisualInfo(doc);
+                if (!vis || !vis.total) {{
+                  try {{ cleanupPdf(doc); }} catch (e) {{}}
+                  try {{ rootWin.alert("Aucun graphique ou diagramme détecté sur la page actuelle."); }} catch (e) {{}}
+                  return;
+                }}
+
+                // Si la page contient des graphiques Plotly, on doit les convertir en images
+                // sinon ils risquent de ne pas apparaître à l'impression.
+                if (vis.plotly > 0) {{
+                  const ok = await preparePlotlyImages(doc, rootWin);
+                  if (!ok) {{
+                    try {{ cleanupPdf(doc); }} catch (e) {{}}
+                    try {{ rootWin.alert("Impossible d'exporter les graphiques. Actualisez la page et réessayez."); }} catch (e) {{}}
+                    return;
+                  }}
+                }}
+
+                // Le navigateur peut ajouter l'URL en pied de page à l'impression :
+                // on retire les paramètres sensibles (ex: t=...) juste le temps de l'impression.
+                const originalUrl = _stripSensitiveParamsFromUrl(rootWin);
+                const after = () => {{
+                  try {{ _restoreUrl(rootWin, originalUrl); }} catch (e) {{}}
+                  try {{ cleanupPdf(doc); }} catch (e) {{}}
+                }};
+
+                try {{ rootWin.addEventListener("afterprint", after, {{ once: true }}); }} catch (e) {{}}
+                try {{ rootWin.focus(); }} catch (e) {{}}
+                try {{ rootWin.print(); }} catch (e) {{ after(); }}
+                setTimeout(after, 15000);
+                return;
+              }} catch (e) {{
+                const rw = window.top || window.parent || window;
+                const msg = String((e && e.message) || e || "");
+                if (msg.includes("popup_blocked")) {{
+                  try {{ rw.alert("Fenêtre bloquée par le navigateur. Autorisez les popups pour générer le PDF."); }} catch (e2) {{}}
+                }} else {{
+                  try {{ rw.alert("Erreur lors de la génération du PDF. Actualisez la page et réessayez."); }} catch (e2) {{}}
+                }}
+              }} finally {{
+                btn.disabled = false;
+                btn.innerText = prevLabel;
+                state.busy = false;
+              }}
+           }};
         }}
         btn.style.position = "relative";
-        btn.style.background = bg;
-        btn.style.border = `1px solid ${{bg}}`;
-        btn.style.color = "white";
-        btn.style.padding = "8px 12px";
-        btn.style.fontSize = "14px";
-        btn.style.fontWeight = "700";
+        btn.style.background = "transparent";
+        btn.style.border = "1px solid #d0d5dd";
+        btn.style.color = "#667085";
+        btn.style.padding = "6px 10px";
+        btn.style.fontSize = "12px";
+        btn.style.fontWeight = "800";
         btn.style.borderRadius = "10px";
-        btn.style.boxShadow = "0 8px 18px rgba(0,0,0,0.18)";
+        btn.style.boxShadow = "none";
         btn.style.cursor = "pointer";
         btn.style.whiteSpace = "nowrap";
+        btn.style.zIndex = "9999";
+        btn.onmouseenter = function() {{ btn.style.background = "#f2f4f7"; }};
+        btn.onmouseleave = function() {{ btn.style.background = "transparent"; }};
 
         const actions = window.parent.document.getElementById(actionsId);
         if (actions && !actions.contains(btn)) {{
@@ -1441,7 +2650,7 @@ try:
         
         st.sidebar.header("Filtres")
         
-        # Add Semaine Filter to match Excel visual
+        # Ajoute un filtre "Semaine" pour coller au visuel Excel
         if 'Semaine' in df.columns:
             semaines = ['Toutes'] + sorted(list(df['Semaine'].dropna().unique()))
             semaine_choisie = st.sidebar.selectbox("Numéro semaine", semaines)
@@ -1516,10 +2725,8 @@ try:
             if produits_choisis:
                 df = df[df[produit_col].isin(produits_choisis)]
 
-        # EN-TÊTE AVEC BOUTON D'EXPORT
-        col_title, col_export = st.columns([4, 1])
-        with col_title:
-            st.title(" Tableau de Bord - Suivi des Livraisons Carrière")
+        # En-tête
+        st.title(" Tableau de Bord - Suivi des Livraisons")
 
         ca_col = mapping.get('ca')
         poids_col = mapping.get('poids')
@@ -1527,8 +2734,8 @@ try:
         produit_col = mapping.get('produit')
         date_col = mapping.get('date')
 
-        # --- KPIs Globaux ---
-        st.markdown("<div class='kpi-title'>KPIs Globaux</div>", unsafe_allow_html=True)
+        # --- Indicateurs clés (global) ---
+        st.markdown("<div class='kpi-title'>Indicateurs clés (global)</div>", unsafe_allow_html=True)
         ca_total = df[ca_col].sum() if ca_col else 0
         ton_total = df[poids_col].sum() if poids_col else 0
         nb_livraisons = len(df)
@@ -1580,36 +2787,6 @@ try:
         kpi_html += "</div>"
         st.markdown(kpi_html, unsafe_allow_html=True)
         
-        # EXPORT BOUTON (Placé en haut à droite visuellement via les colonnes)
-        with col_export:
-            st.markdown("<br>", unsafe_allow_html=True) # Alignement vertical
-            
-            if 'excel_data' not in st.session_state:
-                st.session_state.excel_data = None
-            
-            # Bouton pour déclencher la génération lourde
-            if st.button(" Préparer l'extraction"):
-                with st.spinner("Génération du fichier Excel en cours..."):
-                    # Créer un DF pour la synthèse
-                    synth_data = {
-                        'Indicateur': ['CA Total', 'Tonnage Total', 'Nb Livraisons', 'Nb Clients', 'Prix Moyen / T', 'Livraisons/Jour'],
-                        'Valeur': [ca_total, ton_total, nb_livraisons, nb_clients, prix_moyen, livraisons_jour]
-                    }
-                    df_synth = pd.DataFrame(synth_data)
-                    
-                    # Générer le fichier et stocker en session
-                    st.session_state.excel_data = generate_excel_download(df, df_synth, mapping)
-                    st.toast("Fichier prêt !")
-            
-            # Afficher le bouton de téléchargement seulement si les données sont prêtes
-            if st.session_state.excel_data is not None:
-                st.download_button(
-                    label=" Télécharger l'Excel",
-                    data=st.session_state.excel_data,
-                    file_name="Dashboard_Extract_Carriere.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-
         st.markdown("---")
         
         # --- VIEWS (Excel vs Dash) ---
@@ -1621,7 +2798,7 @@ try:
         with main_tab_dash:
             st.subheader(" Indicateurs & graphiques")
             
-            # Reprise des analyses avancées par KPIs
+            # Reprise des analyses avancées par indicateurs
             adv_col1, adv_col2, adv_col3 = st.columns(3)
             with adv_col1:
                 st.markdown("<div class='kpi-title'> Par Période</div>", unsafe_allow_html=True)
@@ -1706,9 +2883,9 @@ try:
                                 hole=0.4,
                                 color_discrete_sequence=theme["pie"],
                             )
-                            fig3_t.update_traces(textposition="inside", textinfo="percent+label")
-                            fig3_t.update_layout(margin=dict(t=0, b=0, l=0, r=0))
-                            st.plotly_chart(apply_plotly_style(fig3_t), width="stretch")
+                            fig3_t.update_traces(textposition="inside", textinfo="percent")
+                            fig3_t.update_layout(margin=dict(t=8, b=24, l=8, r=8), uniformtext_minsize=10, uniformtext_mode="hide")
+                            st.plotly_chart(apply_plotly_style(fig3_t, kind="pie"), width="stretch")
                         with tab_p2:
                             fig3_ca = px.pie(
                                 df_prod_pie,
@@ -1717,16 +2894,16 @@ try:
                                 hole=0.4,
                                 color_discrete_sequence=theme["pie"],
                             )
-                            fig3_ca.update_traces(textposition="inside", textinfo="percent+label")
-                            fig3_ca.update_layout(margin=dict(t=0, b=0, l=0, r=0))
-                            st.plotly_chart(apply_plotly_style(fig3_ca), width="stretch")
+                            fig3_ca.update_traces(textposition="inside", textinfo="percent")
+                            fig3_ca.update_layout(margin=dict(t=8, b=24, l=8, r=8), uniformtext_minsize=10, uniformtext_mode="hide")
+                            st.plotly_chart(apply_plotly_style(fig3_ca, kind="pie"), width="stretch")
 
                 # Graphique 4 : Top 10 Clients (Barre horizontale)
                 with row2_col2:
                     if client_col and ca_col and poids_col:
                         df_client_top = df.groupby(client_col).agg({ca_col: 'sum', poids_col: 'sum'}).reset_index()
                         df_client_top = df_client_top.sort_values(by=ca_col, ascending=False).head(10)
-                        df_client_top = df_client_top.sort_values(by=ca_col, ascending=True) # Ascending for horizontal bar
+                        df_client_top = df_client_top.sort_values(by=ca_col, ascending=True) # Inversion pour barres horizontales
                         
                         fig4 = px.bar(df_client_top, x=ca_col, y=client_col, orientation='h',
                                       title="Graphique 4: Top 10 Clients (CA)", text=ca_col,
@@ -1790,7 +2967,53 @@ try:
                 "Importez un Excel contenant de nouveaux enregistrements. "
                 "En mode fichier local (par défaut), le fichier source sera mis à jour et les graphiques se recalculeront automatiquement."
             )
-            if isinstance(data_source, str):
+
+            st.markdown('<div id="update-anchor"></div>', unsafe_allow_html=True)
+            if st.session_state.pop("after_update_focus", False):
+                components.html(
+                    """
+                    <script>
+                    (function () {
+                      try {
+                        const doc = window.parent && window.parent.document;
+                        if (!doc) return;
+
+                        const tryClickTab = () => {
+                          const tabs = Array.from(doc.querySelectorAll('[role="tab"]'));
+                          const target = tabs.find((t) => (t.innerText || "").includes("Mise à jour du tableur"));
+                          if (target) target.click();
+                        };
+
+                        const tryScroll = () => {
+                          const el = doc.getElementById("update-anchor");
+                          if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                        };
+
+                        tryClickTab();
+                        setTimeout(tryScroll, 60);
+                        setTimeout(tryClickTab, 120);
+                        setTimeout(tryScroll, 220);
+                      } catch (e) {}
+                    })();
+                    </script>
+                    """,
+                    height=0,
+                )
+
+            notice = st.session_state.pop("after_update_notice", None)
+            if notice:
+                st.success(notice)
+
+            warn = st.session_state.pop("after_update_warning", None)
+            if warn:
+                st.warning(warn)
+
+            details_after = st.session_state.pop("after_update_details", None)
+            if details_after:
+                with st.expander("Détails de la mise à jour", expanded=False):
+                    st.write(details_after)
+
+            if isinstance(data_source, (str, Path)):
                 lock_path = Path(data_source).with_name("~$" + Path(data_source).name)
                 if lock_path.exists():
                     st.warning(
@@ -1821,8 +3044,8 @@ try:
                         sheet_name = 0
 
                 dedup_by_ticket = st.checkbox(
-                    "Supprimer les doublons par Ticket",
-                    value=True,
+                    "Supprimer les doublons par Ticket (si le ticket est unique)",
+                    value=False,
                     help="Recommandé si le ticket identifie une livraison unique. Désactivez si vous pensez que le ticket peut se répéter légitimement.",
                     key="update_dedup_ticket",
                 )
@@ -1854,19 +3077,78 @@ try:
                                     new_df[col] = pd.NA
                             new_df = new_df[raw_full_df.columns]
 
+                            rows_read = int(len(new_df))
+                            ticket_col = mapping.get("ticket")
+                            date_col = mapping.get("date")
+                            mois_col = mapping.get("mois")
+
+                            import_date_min = None
+                            import_date_max = None
+                            if date_col and date_col in new_df.columns:
+                                try:
+                                    dt_import = pd.to_datetime(new_df[date_col], errors="coerce")
+                                    import_date_min = dt_import.min()
+                                    import_date_max = dt_import.max()
+                                except Exception:
+                                    pass
+
+                            import_months = None
+                            if mois_col and mois_col in new_df.columns:
+                                try:
+                                    mois_vals = new_df[mois_col].dropna().astype(str).unique().tolist()
+                                    import_months = sorted(mois_vals, key=lambda v: str(v).casefold())
+                                except Exception:
+                                    pass
+
+                            removed_exact_import = 0
+                            removed_ticket_import = 0
+                            skipped_exact_existing = 0
+                            skipped_ticket_existing = 0
+
+                            # 1) Doublons internes au fichier importé
+                            new_df, removed_exact_import = _drop_exact_duplicates(new_df)
+                            if dedup_by_ticket:
+                                new_df, removed_ticket_import = _drop_duplicates_by_ticket(new_df, ticket_col)
+
+                            # 2) Évite d'ajouter ce qui existe déjà dans l'extraction
+                            if len(new_df):
+                                if dedup_by_ticket and ticket_col and ticket_col in raw_full_df.columns and ticket_col in new_df.columns:
+                                    base_ticket = _normalize_ticket_for_dedup(raw_full_df[ticket_col])
+                                    base_ticket_set = set(base_ticket.dropna().unique().tolist())
+                                    new_ticket = _normalize_ticket_for_dedup(new_df[ticket_col])
+                                    mask_ticket_exists = new_ticket.isin(base_ticket_set)
+                                    skipped_ticket_existing = int(mask_ticket_exists.sum())
+                                    if skipped_ticket_existing:
+                                        new_df = new_df.loc[~mask_ticket_exists].copy()
+                                        new_df.reset_index(drop=True, inplace=True)
+
+                                base_hash = _hash_rows(raw_full_df)
+                                new_hash = _hash_rows(new_df)
+                                if base_hash is not None and new_hash is not None:
+                                    mask_exact_exists = new_hash.isin(base_hash)
+                                    skipped_exact_existing = int(mask_exact_exists.sum())
+                                    if skipped_exact_existing:
+                                        new_df = new_df.loc[~mask_exact_exists].copy()
+                                        new_df.reset_index(drop=True, inplace=True)
+
+                            rows_added = int(len(new_df))
+
                             updated_full_df = pd.concat([raw_full_df, new_df], ignore_index=True)
 
-                            # Optionnel: éviter les doublons exacts par ticket si la colonne existe
-                            ticket_col = mapping.get("ticket")
-                            removed = 0
-                            if dedup_by_ticket and ticket_col and ticket_col in updated_full_df.columns:
-                                before = len(updated_full_df)
-                                ticket = updated_full_df[ticket_col].astype("string").str.strip()
-                                dup_mask = ticket.notna() & ticket.ne("") & ticket.duplicated(keep="first")
-                                updated_full_df = updated_full_df[~dup_mask]
-                                removed = before - len(updated_full_df)
+                            # 3) Nettoyage final après fusion
+                            updated_full_df, removed_exact_after = _drop_exact_duplicates(updated_full_df)
+                            removed_ticket_after = 0
+                            if dedup_by_ticket:
+                                updated_full_df, removed_ticket_after = _drop_duplicates_by_ticket(updated_full_df, ticket_col)
 
-                            if not (isinstance(data_source, str) and os.path.exists(data_source)):
+                            data_source_path: Path | None = None
+                            if isinstance(data_source, (str, Path)):
+                                try:
+                                    data_source_path = Path(data_source)
+                                except Exception:
+                                    data_source_path = None
+
+                            if not (data_source_path and data_source_path.exists()):
                                 st.error(
                                     "Impossible de mettre à jour le fichier source dans ce mode (fichier uploadé). "
                                     "Utilisez le fichier par défaut local ou relancez l'app avec un fichier sur disque."
@@ -1875,10 +3157,10 @@ try:
                                 saved_path = None
                                 save_note = None
                                 try:
-                                    updated_full_df.to_excel(data_source, index=False)
-                                    saved_path = data_source
+                                    updated_full_df.to_excel(data_source_path, index=False)
+                                    saved_path = str(data_source_path)
                                 except PermissionError:
-                                    src = Path(data_source)
+                                    src = data_source_path
                                     alt = src.with_name(f"{src.stem} - MAJ {datetime.now():%Y%m%d-%H%M%S}{src.suffix}")
                                     updated_full_df.to_excel(alt, index=False)
                                     st.session_state.local_data_source = str(alt)
@@ -1888,12 +3170,7 @@ try:
                                         "Une copie mise à jour a été enregistrée."
                                     )
 
-                                msg = f"{len(new_df)} lignes ajoutées."
-                                if removed:
-                                    msg += f" {removed} doublons supprimés (Ticket)."
-                                st.success(msg)
-                                if save_note:
-                                    st.warning(f"{save_note} Fichier : {saved_path}")
+                                msg = f"{rows_added} lignes ajoutées."
 
                                 # Mettre à jour les stats + chemin dans le dossier actif (multi-compte)
                                 try:
@@ -1914,43 +3191,43 @@ try:
                                 except Exception:
                                     pass
 
-                                with st.expander("Détails import", expanded=False):
-                                    details = {
-                                        "Fichier enregistré": saved_path,
-                                        "Lignes lues (fichier importé)": int(len(new_df)),
-                                        "Lignes totales (après fusion)": int(len(updated_full_df)),
-                                        "Doublons supprimés (Ticket)": int(removed),
-                                    }
-                                    date_col = mapping.get("date")
-                                    if date_col and date_col in new_df.columns:
-                                        try:
-                                            details["Date min (import)"] = str(pd.to_datetime(new_df[date_col], errors="coerce").min())
-                                            details["Date max (import)"] = str(pd.to_datetime(new_df[date_col], errors="coerce").max())
-                                        except Exception:
-                                            pass
-                                    mois_col = mapping.get("mois")
-                                    if mois_col and mois_col in new_df.columns:
-                                        try:
-                                            mois_vals = new_df[mois_col].dropna().astype(str).unique().tolist()
-                                            details["Mois (import)"] = sorted(mois_vals, key=lambda v: str(v).casefold())
-                                        except Exception:
-                                            pass
-                                    st.write(details)
+                                details = {
+                                    "Fichier enregistré": saved_path,
+                                    "Lignes lues (fichier importé)": int(rows_read),
+                                    "Lignes ajoutées": int(rows_added),
+                                    "Lignes totales (après fusion)": int(len(updated_full_df)),
+                                    "Doublons supprimés (import, lignes identiques)": int(removed_exact_import),
+                                    "Doublons ignorés (déjà présents, lignes identiques)": int(skipped_exact_existing),
+                                    "Doublons supprimés (après fusion, lignes identiques)": int(removed_exact_after),
+                                }
+                                if dedup_by_ticket:
+                                    details["Doublons supprimés (import, Ticket)"] = int(removed_ticket_import)
+                                    details["Doublons ignorés (Ticket déjà présent)"] = int(skipped_ticket_existing)
+                                    details["Doublons supprimés (Ticket, après fusion)"] = int(removed_ticket_after)
+                                if import_date_min is not None:
+                                    details["Date min (import)"] = str(import_date_min)
+                                if import_date_max is not None:
+                                    details["Date max (import)"] = str(import_date_max)
+                                if import_months is not None:
+                                    details["Mois (import)"] = import_months
 
                                 st.cache_data.clear()
-                                st.info("Mise à jour enregistrée. Cliquez sur '🔄 Recharger' pour actualiser filtres et graphiques.")
-                                if st.button("🔄 Recharger", key="reload_after_update"):
-                                    st.rerun()
+                                st.session_state.after_update_notice = msg
+                                if save_note:
+                                    st.session_state.after_update_warning = f"{save_note} Fichier : {saved_path}"
+                                st.session_state.after_update_details = details
+                                st.session_state.after_update_focus = True
+                                st.rerun()
                     except Exception as e:
                         st.exception(e)
 
         
         with main_tab_excel:
-            # --- Analyses Avancées (Type Excel) ---
-            st.subheader(" Analyses Détaillées - Type Excel")
+            # --- Analyses avancées ---
+            st.subheader(" Analyses détaillées")
             tab_client, tab_produit, tab_livraison = st.tabs([" Analyse par Produit/Client", " Évolution des Livraisons", " Performance Clients"])
             
-            # TAB 1: Analyse par Produit (Correspond à la capture 1 - Tableaux à barres intégrées)
+            # Onglet 1 : Analyse par produit (tableaux à barres intégrées)
             with tab_client:
                 if produit_col and ca_col and poids_col:
                     col_pt1, col_pt2 = st.columns([1.5, 1])
@@ -1998,30 +3275,30 @@ try:
                             st.info("Aucune donnée pour cette sélection.")
                         else:
                             fig_pie = px.pie(df_prod, values=poids_col, names=produit_col, hole=0.3, color_discrete_sequence=theme["pie"])
-                            fig_pie.update_traces(textposition='inside', textinfo='none') # Hide text inside to match Excel
-                            fig_pie.update_layout(showlegend=True, margin=dict(t=0, b=0, l=0, r=0))
+                            fig_pie.update_traces(textposition='inside', textinfo='none') # Masque le texte interne (style Excel)
+                            fig_pie.update_layout(showlegend=True, margin=dict(t=8, b=24, l=8, r=8), uniformtext_minsize=10, uniformtext_mode="hide")
                             st.plotly_chart(apply_plotly_style(fig_pie, kind="pie"), width="stretch")
 
-            # TAB 2: Evolution des livraisons (Correspond à la capture 3 - Courbes croisées)
+            # Onglet 2 : Évolution des livraisons (courbes croisées)
             with tab_produit:
                 if date_col and produit_col and poids_col and mapping.get('mois'):
                     st.markdown("**Analyse des quantités livrées par mois et par produit**")
                     
-                    # Order months correctly
+                    # Ordonner correctement les mois
                     months_order = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre']
                     
-                    # Get total deliveries per month/product
+                    # Calcul des totaux par mois et par produit
                     if 'Semaine' in df.columns:
-                        # Let user choose by week or month, default to month
+                        # L'utilisateur peut agréger par semaine ou par mois (par défaut : mois)
                         group_col = mapping['mois']
                         
                         df_evol_prod = df.groupby([group_col, produit_col])[poids_col].sum().reset_index()
                         
-                        # Ensure categorical order for months
+                        # Assure l'ordre catégoriel des mois
                         if group_col == mapping['mois']:
-                            # Filter to only contain valid formatting
+                            # Filtrer pour ne conserver que des libellés valides
                             df_evol_prod[group_col] = df_evol_prod[group_col].str.lower()
-                            # Sort
+                            # Trier
                             df_evol_prod[group_col] = pd.Categorical(df_evol_prod[group_col], categories=months_order, ordered=True)
                             df_evol_prod = df_evol_prod.sort_values(group_col)
                         
@@ -2037,7 +3314,7 @@ try:
                                                 legend_title="Produit", hovermode="x unified")
                         st.plotly_chart(apply_plotly_style(fig_lines), width="stretch")
 
-            # TAB 3: Performance Clients (Correspond à la capture 2 - Analyse matricielle)
+            # Onglet 3 : Performance clients (analyse matricielle)
             with tab_livraison:
                 if client_col and ca_col and poids_col and produit_col:
                     st.markdown("**Performance Globale par Client**")
@@ -2047,7 +3324,7 @@ try:
                     
                     col_c1, col_c2 = st.columns([1, 2])
                     with col_c1:
-                        # Show Bar charts for top 20 clients
+                        # Graphiques en barres pour les 20 meilleurs clients
                         top_clients = df_client_perf.head(20).copy()
                         top_clients = top_clients.sort_values(by=poids_col, ascending=False)
                         
@@ -2085,16 +3362,16 @@ try:
                             )
                         
                     with col_c2:
-                        # Matrix Client vs Product
+                        # Matrice client × produit
                         st.markdown("**Livraison par produit (en tonnes)**")
                         pivot_df = pd.pivot_table(df, values=poids_col, index=client_col, columns=produit_col, aggfunc='sum', fill_value=0)
                         pivot_df['Total'] = pivot_df.sum(axis=1)
                         pivot_df = pivot_df.sort_values(by='Total', ascending=False)
-                        # Limit to top 20 like the left dataframe to keep them vertically aligned
+                        # Limite aux 20 premiers (comme le tableau de gauche) pour garder l'alignement
                         pivot_df_top = pivot_df.head(20) 
                         pivot_df_top = pivot_df_top.drop(columns=['Total'])
                         
-                        # Style the dataframe like Excel
+                        # Style du tableau façon Excel
                         st.dataframe(
                             pivot_df_top.style.format("{:,.2f}").background_gradient(cmap=theme["table_cmap"], axis=None),
                             height=600,
@@ -2105,12 +3382,12 @@ try:
                             unsafe_allow_html=True,
                         )
                         
-                        # Add stacked bar chart below the matrix table
+                        # Ajoute un histogramme empilé sous la matrice
                         st.markdown("**Graphique de Livraison par Produit (Top 20 Clients)**")
-                        # Prepare data for stacked bars
-                        # Melt the pivot table back to long format for Plotly
+                        # Prépare les données pour l'histogramme empilé
+                        # Repasse la table pivot en format long pour Plotly
                         melted_df = pivot_df_top.reset_index().melt(id_vars=client_col, value_vars=pivot_df_top.columns, var_name=produit_col, value_name=poids_col)
-                        # Filter out zero values to keep chart clean
+                        # Retire les zéros pour garder un graphique lisible
                         melted_df = melted_df[melted_df[poids_col] > 0]
                         
                         fig_stacked = px.bar(
@@ -2126,12 +3403,12 @@ try:
 
         # --- Base de données Brute ---
         st.markdown("---")
-        with st.expander(" Voir les données (brutes / filtrées)"):
-            tab_raw, tab_filtered = st.tabs(["Brutes (complet)", "Filtrées (selon filtres)"])
-            with tab_raw:
-                st.dataframe(raw_full_df, width="stretch")
-            with tab_filtered:
-                st.dataframe(df, width="stretch")
+        st.subheader("Données")
+        tab_raw, tab_filtered = st.tabs(["Brutes (complet)", "Filtrées (selon filtres)"])
+        with tab_raw:
+            st.dataframe(raw_full_df, width="stretch")
+        with tab_filtered:
+            st.dataframe(df, width="stretch")
             
     else:
         st.warning("Veuillez charger un fichier Excel (.xls, .xlsx) depuis le panneau de gauche.")
