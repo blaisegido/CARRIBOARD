@@ -2193,13 +2193,14 @@ components.html(
               }} catch (e) {{}}
 
               let other = 0;
-              const otherSelectors = [
-                "div[data-testid='stVegaLiteChart']",
-                "div[data-testid='stPyplot']",
-                "div[data-testid='stGraphvizChart']",
-                "div[data-testid='stDeckGlJsonChart']",
+             const otherSelectors = [
+               "div[data-testid='stVegaLiteChart']",
+               "div[data-testid='stPyplot']",
+               "div[data-testid='stGraphvizChart']",
+               "div[data-testid='stDeckGlJsonChart']",
                 "div[data-testid='stImage'] img",
-              ];
+               ".print-table",
+             ];
               for (const sel of otherSelectors) {{
                 try {{
                   const els = roots.flatMap((r) => Array.from(r.querySelectorAll(sel)));
@@ -2515,13 +2516,24 @@ components.html(
                   best = tl;
                 }}
               }}
-              if (!best || bestScore <= 0) return false;
+              const fallback = () => {{
+                try {{
+                  const root =
+                    doc.querySelector("div[data-testid='stMain'] div.block-container") ||
+                    doc.querySelector("div[data-testid='stMain']") ||
+                    doc.body;
+                  if (root) root.setAttribute("data-pdf-scope", "1");
+                  return true;
+                }} catch (e) {{}}
+                return false;
+              }};
+              if (!best || bestScore <= 0) return fallback();
 
               const tabs = Array.from(best.querySelectorAll("[role='tab']"));
               const selected = tabs.find((t) => t.getAttribute("aria-selected") === "true") || tabs[0];
               const panelId = selected ? selected.getAttribute("aria-controls") : null;
               const panel = panelId ? doc.getElementById(panelId) : null;
-              if (!panel) return false;
+              if (!panel) return fallback();
 
               panel.setAttribute("data-pdf-scope", "1");
               return true;
