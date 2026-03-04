@@ -1236,10 +1236,21 @@ def _create_project_from_upload(uploaded, theme_idx: int) -> str:
 
 def _ensure_default_project_if_needed() -> None:
     existing = projects.list_projects(PROJECT_DB_PATH, user_id)
-    if existing:
-        return
     if not os.path.exists(fichier_defaut):
         return
+
+    # Sur Streamlit Cloud, l'utilisateur peut déjà avoir des extractions :
+    # on s'assure simplement que l'extraction "par défaut" existe aussi.
+    try:
+        default_abs = os.path.abspath(str(fichier_defaut))
+        for p in (existing or []):
+            try:
+                if os.path.abspath(str(p.data_path)) == default_abs:
+                    return
+            except Exception:
+                continue
+    except Exception:
+        pass
 
     try:
         df_tmp, mapping_tmp = load_data(str(fichier_defaut), clean_version=DATA_CLEAN_VERSION)
