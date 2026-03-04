@@ -1297,13 +1297,31 @@ if uploaded_file is not None:
 
 # Liste des extractions (pour la barre du haut)
 all_projects = projects.list_projects(PROJECT_DB_PATH, user_id)
+
+# Après déploiement / 1ère ouverture, on sélectionne automatiquement l'extraction par défaut
+# (pont bascule retraité) si l'utilisateur n'a rien sélectionné.
+default_project_id: Optional[str] = None
+try:
+    default_abs = os.path.abspath(str(fichier_defaut))
+    for p in (all_projects or []):
+        try:
+            if os.path.abspath(str(p.data_path)) == default_abs:
+                default_project_id = p.id
+                break
+        except Exception:
+            continue
+except Exception:
+    default_project_id = None
+
 if not st.session_state.active_project_id:
     requested = _qp_get_first("p")
-    if requested:
-        if projects.get_project(PROJECT_DB_PATH, user_id, requested) is not None:
-            st.session_state.active_project_id = requested
-        else:
+    if requested and projects.get_project(PROJECT_DB_PATH, user_id, requested) is not None:
+        st.session_state.active_project_id = requested
+    else:
+        if requested:
             _qp_set(p=None)
+        if default_project_id:
+            st.session_state.active_project_id = default_project_id
 active_project = projects.get_project(PROJECT_DB_PATH, user_id, st.session_state.active_project_id) if st.session_state.active_project_id else None
 
 if not st.session_state.active_project_id or active_project is None:
