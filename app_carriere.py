@@ -1859,19 +1859,50 @@ components.html(
          `;
        }}
 
-      function ensureButton() {{
-        let btn = window.parent.document.getElementById(BTN_ID);
-        if (!btn) {{
-          btn = window.parent.document.createElement("button");
+       function ensureButton() {{
+         let btn = window.parent.document.getElementById(BTN_ID);
+         if (!btn) {{
+           btn = window.parent.document.createElement("button");
           btn.id = BTN_ID;
           btn.type = "button";
           btn.innerText = label;
           btn.title = "Imprimer / Enregistrer en PDF (graphiques et diagrammes). Pour supprimer l'URL en bas : désactivez « En-têtes et pieds de page » dans l'impression.";
 
-          const state = {{
-            busy: false,
-            wrappers: [],
-          }};
+           const state = {{
+             busy: false,
+             wrappers: [],
+           }};
+
+           function getStreamlitRootWindow() {{
+             const wins = [];
+             try {{
+               let w = window;
+               for (let i = 0; i < 10; i += 1) {{
+                 wins.push(w);
+                 let p = null;
+                 try {{ p = w.parent; }} catch (e) {{ p = null; }}
+                 if (!p || p === w) break;
+                 // Stoppe si cross-origin / inaccessible
+                 try {{ void p.document; }} catch (e) {{ break; }}
+                 w = p;
+               }}
+             }} catch (e) {{
+               wins.push(window);
+             }}
+
+             // Choisit la fenêtre dont le DOM contient vraiment l'app Streamlit
+             for (let i = wins.length - 1; i >= 0; i -= 1) {{
+               try {{
+                 const d = wins[i].document;
+                 if (d && d.querySelector && d.querySelector(\"div[data-testid='stMain']\")) return wins[i];
+               }} catch (e) {{}}
+             }}
+             // Fallback raisonnable
+             try {{
+               if (window.parent && window.parent.document) return window.parent;
+             }} catch (e) {{}}
+             return window;
+           }}
 
            function cleanupPdf(doc) {{
              try {{ doc.body.removeAttribute("data-pdf-plots"); }} catch (e) {{}}
@@ -2619,10 +2650,10 @@ components.html(
              btn.innerText = "Préparation…";
              btn.disabled = true;
 
-             try {{
-               const rootWin = window.top || window.parent || window;
+              try {{
+                const rootWin = getStreamlitRootWindow();
                 const doc = rootWin.document || window.parent.document;
-                const main = getMainNode(doc);
+                 const main = getMainNode(doc);
 
                 // Mode "capture" (style tableau de bord) :
                 // - masque les éléments UI superflus
