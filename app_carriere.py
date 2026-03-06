@@ -408,7 +408,7 @@ if st.session_state.auth_user is None:
               if (tok) {{
                 url.searchParams.set("t", tok);
                 url.searchParams.set("autologin", "1");
-                rootWin.history.replaceState(null, "", url.toString()); rootWin.dispatchEvent(new Event("popstate"));
+                rootWin.location.replace(url.toString());
               }}
             }}
           }} catch (e) {{}}
