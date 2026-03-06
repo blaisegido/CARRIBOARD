@@ -307,10 +307,19 @@ def _auth_token_secret() -> bytes:
         return str(raw).encode("utf-8")
     return secrets.token_bytes(32)
 
+AUTH_TOKEN_STORAGE_KEY = "carriboard_session_token"
+
 
 def _logout() -> None:
+    tok = st.session_state.get("auth_token")
+    if tok and hasattr(auth, "revoke_session_token"):
+        try:
+            auth.revoke_session_token(AUTH_DB_PATH, str(tok))
+        except Exception:
+            pass
     st.session_state.auth_user = None
     st.session_state.auth_token = None
+    st.session_state._clear_auth_local_storage = True
     st.session_state.pop("active_project_id", None)
     st.session_state.pop("rename_project_id", None)
     st.session_state.pop("local_data_source", None)
@@ -322,11 +331,70 @@ if "auth_user" not in st.session_state:
     st.session_state.auth_user = None
 if "auth_token" not in st.session_state:
     st.session_state.auth_token = None
+if "_clear_auth_local_storage" not in st.session_state:
+    st.session_state._clear_auth_local_storage = False
 
 if _qp_get_first("logout") == "1":
     _logout()
 
 if st.session_state.auth_user is None:
+    token = _qp_get_first("t")
+    if token and hasattr(auth, "verify_session_token") and hasattr(auth, "get_user"):
+        try:
+            uid = auth.verify_session_token(token, _auth_token_secret(), db_path=AUTH_DB_PATH)  # type: ignore[call-arg]
+        except TypeError:
+            uid = auth.verify_session_token(token, _auth_token_secret())
+
+        if uid is not None:
+            restored = auth.get_user(AUTH_DB_PATH, uid)
+            if restored is not None:
+                st.session_state.auth_user = restored
+                st.session_state.auth_token = token
+                _qp_set(t=None, autologin=None, autologin_failed=None, logout=None)
+                st.rerun()
+        else:
+            # Token invalide : évite les boucles d'auto-login.
+            if _qp_get_first("autologin") == "1":
+                st.session_state._clear_auth_local_storage = True
+                _qp_set(t=None, autologin=None, autologin_failed="1")
+                st.rerun()
+
+if st.session_state.auth_user is None:
+    should_clear_ls = bool(st.session_state.get("_clear_auth_local_storage"))
+    if should_clear_ls:
+        st.session_state._clear_auth_local_storage = False
+
+    components.html(
+        f"""
+        <script>
+        (function () {{
+          const KEY = {json.dumps(AUTH_TOKEN_STORAGE_KEY)};
+          const shouldClear = {json.dumps(bool(should_clear_ls))};
+          try {{
+            const rootWin = window.parent || window;
+            if (shouldClear) {{
+              try {{ rootWin.localStorage.removeItem(KEY); }} catch (e) {{}}
+            }}
+
+            const url = new URL(String(rootWin.location.href || ""));
+            const hasToken = url.searchParams.has("t");
+            const failed = url.searchParams.get("autologin_failed") === "1";
+            if (!hasToken && !failed) {{
+              let tok = null;
+              try {{ tok = rootWin.localStorage.getItem(KEY); }} catch (e) {{ tok = null; }}
+              if (tok) {{
+                url.searchParams.set("t", tok);
+                url.searchParams.set("autologin", "1");
+                rootWin.location.href = url.toString();
+              }}
+            }}
+          }} catch (e) {{}}
+        }})();
+        </script>
+        """,
+        height=0,
+    )
+
     components.html(
         """
         <script>
@@ -375,10 +443,22 @@ if st.session_state.auth_user is None:
 
             def _on_auth_success(user_obj: auth.User) -> None:
                 st.session_state.auth_user = user_obj
-                st.session_state.auth_token = None
+                tok = None
+                if hasattr(auth, "issue_session_token"):
+                    try:
+                        tok = auth.issue_session_token(
+                            user_obj.id,
+                            _auth_token_secret(),
+                            max_age_seconds=60 * 60 * 24 * 30,
+                        )
+                    except Exception:
+                        tok = None
+                st.session_state.auth_token = tok
                 params = _qp_read()
                 params.pop("t", None)
                 params.pop("logout", None)
+                params.pop("autologin", None)
+                params.pop("autologin_failed", None)
                 _qp_write(params)
                 st.session_state.pop("active_project_id", None)
                 st.session_state.pop("rename_project_id", None)
@@ -414,6 +494,35 @@ if st.session_state.auth_user is None:
                             st.error(str(e))
 
     st.stop()
+
+# Persistance de session côté navigateur (localStorage), sans laisser le token dans l'URL
+if st.session_state.get("auth_token"):
+    components.html(
+        f"""
+        <script>
+        (function () {{
+          const KEY = {json.dumps(AUTH_TOKEN_STORAGE_KEY)};
+          const tok = {json.dumps(str(st.session_state.get("auth_token") or ""))};
+          try {{
+            const rootWin = window.parent || window;
+            if (tok) {{
+              try {{ rootWin.localStorage.setItem(KEY, tok); }} catch (e) {{}}
+            }}
+            try {{
+              const url = new URL(String(rootWin.location.href || ""));
+              const keys = ["t", "autologin", "autologin_failed", "logout"];
+              let changed = false;
+              for (const k of keys) {{
+                if (url.searchParams.has(k)) {{ url.searchParams.delete(k); changed = true; }}
+              }}
+              if (changed) rootWin.history.replaceState(null, "", url.toString());
+            }} catch (e) {{}}
+          }} catch (e) {{}}
+        }})();
+        </script>
+        """,
+        height=0,
+    )
 
 # Bandeau (visible par tous les utilisateurs connectés)
 st.markdown(
@@ -1064,8 +1173,24 @@ dossier_app = os.path.dirname(os.path.abspath(__file__))
 
 DEFAULT_EXTRACTION_SOURCE_NAME = "extraction pont bascule retraité.xlsx"
 
+def _default_extraction_enabled() -> bool:
+    raw = (os.environ.get("CARRIBOARD_ENABLE_DEFAULT_EXTRACTION") or "").strip()
+    if not raw:
+        try:
+            raw = str(st.secrets.get("CARRIBOARD_ENABLE_DEFAULT_EXTRACTION") or "").strip()  # type: ignore[attr-defined]
+        except Exception:
+            raw = ""
+    raw = (raw or "").strip().casefold()
+    return raw in ("1", "true", "yes", "on")
+
 
 def _get_default_extraction_url() -> Optional[str]:
+    # Par défaut, on ne charge AUCUNE extraction "de démo" en ligne.
+    # Pour activer un fichier par défaut, définir:
+    # - CARRIBOARD_ENABLE_DEFAULT_EXTRACTION=1
+    # - et CARRIBOARD_DEFAULT_EXTRACTION_URL (secret/env) si besoin
+    if not _default_extraction_enabled():
+        return None
     raw = (os.environ.get("CARRIBOARD_DEFAULT_EXTRACTION_URL") or "").strip()
     if raw:
         return raw
@@ -1078,6 +1203,8 @@ def _get_default_extraction_url() -> Optional[str]:
 
 @st.cache_resource
 def _resolve_default_extraction_path() -> Path:
+    if not _default_extraction_enabled():
+        return Path("")
     candidates = [
         Path(dossier_app) / "extraction pont bascule retraité.xlsx",
         Path(dossier_app) / "extraction pont bsacule retraité.xlsx",
@@ -1112,7 +1239,7 @@ def _resolve_default_extraction_path() -> Path:
     return dst if dst.exists() else candidates[0]
 
 
-fichier_defaut = str(_resolve_default_extraction_path())
+fichier_defaut = str(_resolve_default_extraction_path()) if _default_extraction_enabled() else ""
 
 user = st.session_state.auth_user
 st.sidebar.markdown(
@@ -1325,7 +1452,7 @@ def _create_project_from_upload(uploaded, theme_idx: int) -> str:
 
 def _ensure_default_project_if_needed() -> None:
     existing = projects.list_projects(PROJECT_DB_PATH, user_id)
-    if not os.path.exists(fichier_defaut):
+    if not (_default_extraction_enabled() and fichier_defaut and os.path.exists(fichier_defaut)):
         return
 
     # Sur Streamlit Cloud, l'utilisateur peut déjà avoir des extractions :
@@ -1389,17 +1516,18 @@ all_projects = projects.list_projects(PROJECT_DB_PATH, user_id)
 # Après déploiement / 1ère ouverture, on sélectionne automatiquement l'extraction par défaut
 # (pont bascule retraité) si l'utilisateur n'a rien sélectionné.
 default_project_id: Optional[str] = None
-try:
-    default_abs = os.path.abspath(str(fichier_defaut))
-    for p in (all_projects or []):
-        try:
-            if os.path.abspath(str(p.data_path)) == default_abs:
-                default_project_id = p.id
-                break
-        except Exception:
-            continue
-except Exception:
-    default_project_id = None
+if _default_extraction_enabled() and fichier_defaut and os.path.exists(fichier_defaut):
+    try:
+        default_abs = os.path.abspath(str(fichier_defaut))
+        for p in (all_projects or []):
+            try:
+                if os.path.abspath(str(p.data_path)) == default_abs:
+                    default_project_id = p.id
+                    break
+            except Exception:
+                continue
+    except Exception:
+        default_project_id = None
 
 if not st.session_state.active_project_id:
     requested = _qp_get_first("p")
@@ -1770,7 +1898,7 @@ if active_project and st.session_state.rename_project_id == active_project.id:
         st.rerun()
 
 if "local_data_source" not in st.session_state:
-    st.session_state.local_data_source = active_project.data_path if active_project else fichier_defaut
+    st.session_state.local_data_source = active_project.data_path if active_project else None
 else:
     st.session_state.local_data_source = active_project.data_path if active_project else st.session_state.local_data_source
 

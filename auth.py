@@ -29,6 +29,24 @@ class User:
 def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
+def _token_hash(token: str) -> str:
+    t = (token or "").encode("utf-8")
+    return hashlib.sha256(t).hexdigest()
+
+
+def _try_parse_token_payload(token: str) -> Optional[dict]:
+    parts = str(token or "").split(".")
+    if len(parts) != 3 or parts[0] != "v1":
+        return None
+    try:
+        payload_raw = _b64u_decode(parts[1])
+        payload = json.loads(payload_raw.decode("utf-8"))
+        if not isinstance(payload, dict):
+            return None
+        return payload
+    except Exception:
+        return None
+
 
 def _normalize_username(username: str) -> tuple[str, str]:
     u = (username or "").strip()
@@ -65,6 +83,16 @@ def init_db(db_path: Path) -> None:
             """
         )
         con.execute("CREATE INDEX IF NOT EXISTS idx_users_username_canon ON users(username_canon)")
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS revoked_tokens (
+              token_hash TEXT PRIMARY KEY,
+              revoked_at TEXT NOT NULL,
+              exp INTEGER
+            )
+            """
+        )
+        con.execute("CREATE INDEX IF NOT EXISTS idx_revoked_tokens_exp ON revoked_tokens(exp)")
 
 
 def get_user(db_path: Path, user_id: int) -> Optional[User]:
@@ -99,8 +127,24 @@ def issue_session_token(user_id: int, secret: bytes, *, max_age_seconds: int) ->
     sig = hmac.new(secret, payload_raw, hashlib.sha256).digest()
     return f"v1.{_b64u_encode(payload_raw)}.{_b64u_encode(sig)}"
 
+def revoke_session_token(db_path: Path, token: str) -> None:
+    init_db(db_path)
+    token_hash = _token_hash(token)
+    payload = _try_parse_token_payload(token)
+    exp = None
+    try:
+        if payload and payload.get("exp") is not None:
+            exp = int(payload.get("exp"))
+    except Exception:
+        exp = None
 
-def verify_session_token(token: str, secret: bytes) -> Optional[int]:
+    with sqlite3.connect(db_path) as con:
+        con.execute(
+            "INSERT OR REPLACE INTO revoked_tokens (token_hash, revoked_at, exp) VALUES (?, ?, ?)",
+            (token_hash, _now_iso(), exp),
+        )
+
+def verify_session_token(token: str, secret: bytes, db_path: Optional[Path] = None) -> Optional[int]:
     if not token or not secret:
         return None
     parts = str(token).split(".")
@@ -126,6 +170,22 @@ def verify_session_token(token: str, secret: bytes) -> Optional[int]:
     now = int(datetime.now(timezone.utc).timestamp())
     if exp < now:
         return None
+
+    if db_path is not None:
+        try:
+            init_db(db_path)
+            token_hash = _token_hash(token)
+            with sqlite3.connect(db_path) as con:
+                con.execute("DELETE FROM revoked_tokens WHERE exp IS NOT NULL AND exp < ?", (now,))
+                row = con.execute(
+                    "SELECT 1 FROM revoked_tokens WHERE token_hash = ? LIMIT 1",
+                    (token_hash,),
+                ).fetchone()
+                if row:
+                    return None
+        except Exception:
+            # En cas de souci DB, ne casse pas l'accès (fail-open)
+            pass
     return uid
 
 
