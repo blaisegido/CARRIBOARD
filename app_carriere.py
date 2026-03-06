@@ -122,6 +122,29 @@ def safe_progress_max(value: object) -> float:
     return v
 
 
+def _pie_percent_text(values: "pd.Series", *, decimals: int = 0) -> list[str]:
+    try:
+        v = pd.to_numeric(values, errors="coerce").fillna(0.0)
+        total = float(v.sum())
+        if not math.isfinite(total) or total <= 0:
+            pcts = [0.0] * int(len(v))
+        else:
+            pcts = (v / total).astype(float).tolist()
+        fmt = "{:." + str(int(decimals)) + "%}"
+        return [fmt.format(float(p)) for p in pcts]
+    except Exception:
+        return [""] * int(len(values))
+
+
+def _clean_pie_labels(labels: "pd.Series", *, fallback: str = "Non renseigné") -> "pd.Series":
+    try:
+        s = labels.fillna("").astype(str).str.strip()
+        bad = s.eq("") | s.str.casefold().isin({"undefined", "nan", "none", "<na>", "null"})
+        return s.where(~bad, fallback)
+    except Exception:
+        return labels
+
+
 PLOTLY_FONT_FAMILY = 'Inter, Roboto, system-ui, -apple-system, "Segoe UI", Arial, sans-serif'
 
 
@@ -764,6 +787,60 @@ st.markdown(
     </style>
     """,
     unsafe_allow_html=True,
+)
+
+# Supprime tout texte "undefined" injecté par le navigateur / composants JS (ex: dans certains rendus Plotly)
+components.html(
+    """
+    <script>
+    (function () {
+      try {
+        const rootWin = window.parent || window;
+        const doc = rootWin.document;
+        if (!doc || !doc.body) return;
+
+        const MARK_ID = "carriboard-scrub-undefined-v1";
+        if (doc.getElementById(MARK_ID)) return;
+        const mark = doc.createElement("div");
+        mark.id = MARK_ID;
+        mark.style.display = "none";
+        (doc.head || doc.body).appendChild(mark);
+
+        function scrubWithin(node) {
+          try {
+            const walker = doc.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+            const toClear = [];
+            while (walker.nextNode()) {
+              const t = String(walker.currentNode.nodeValue || "").trim().toLowerCase();
+              if (t === "undefined") toClear.push(walker.currentNode);
+            }
+            for (const n of toClear) n.nodeValue = "";
+          } catch (e) {}
+        }
+
+        scrubWithin(doc.body);
+
+        const obs = new MutationObserver((mutations) => {
+          try {
+            for (const m of mutations) {
+              for (const n of Array.from(m.addedNodes || [])) {
+                if (!n) continue;
+                if (n.nodeType === 3) {
+                  const t = String(n.nodeValue || "").trim().toLowerCase();
+                  if (t === "undefined") n.nodeValue = "";
+                } else if (n.nodeType === 1) {
+                  scrubWithin(n);
+                }
+              }
+            }
+          } catch (e) {}
+        });
+        obs.observe(doc.body, { childList: true, subtree: true });
+      } catch (e) {}
+    })();
+    </script>
+    """,
+    height=0,
 )
 
 components.html(
@@ -2112,9 +2189,9 @@ components.html(
                const tabs = Array.from(doc.querySelectorAll("div[data-testid='stTabs']"));
                for (const t of tabs) {{
                  const txt = norm(t.textContent || "");
-                 const isRawTabs = txt.includes("brutes (complet)") && txt.includes("filtrees");
-                 if (isRawTabs) t.setAttribute("data-pdf-hide", "1");
-               }}
+                const isRawTabs = txt.includes("brutes") && txt.includes("filtrees");
+                if (isRawTabs) t.setAttribute("data-pdf-hide", "1");
+              }}
 
                // 2) cache le titre "Données" juste au-dessus (si présent)
                const heads = Array.from(doc.querySelectorAll("h1, h2, h3, h4, h5"));
@@ -3016,8 +3093,8 @@ try:
         produit_col = mapping.get('produit')
         date_col = mapping.get('date')
 
-        # --- Indicateurs clés (global) ---
-        st.markdown("<div class='kpi-title'>Indicateurs clés (global)</div>", unsafe_allow_html=True)
+        # --- Indicateurs clés ---
+        st.markdown("<div class='kpi-title'>Indicateurs clés</div>", unsafe_allow_html=True)
         ca_total = df[ca_col].sum() if ca_col else 0
         ton_total = df[poids_col].sum() if poids_col else 0
         nb_livraisons = len(df)
@@ -3100,7 +3177,7 @@ try:
                         meilleur_mois = df_monthly.iloc[0][date_col].strftime('%m/%Y') if len(df_monthly)>0 else "N/A"
                         pire_mois = meilleur_mois
                         
-                    st.markdown(f"<div class='kpi-box'>Évolution CA vs M-1 : <span class='kpi-val'>{evol_str}</span><br>Meilleur mois : <b>{meilleur_mois}</b> | Pire mois : <b>{pire_mois}</b></div>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='kpi-box'>Évolution CA vs M-1 : <span class='kpi-val'>{evol_str}</span><br>Mois le plus performant : <b>{meilleur_mois}</b> | Mois le moins performant : <b>{pire_mois}</b></div>", unsafe_allow_html=True)
 
             with adv_col2:
                 st.markdown("<div class='kpi-title'> Par Produit</div>", unsafe_allow_html=True)
@@ -3156,8 +3233,15 @@ try:
                         st.markdown("<b>Graphique 3: Répartition par Produit</b>", unsafe_allow_html=True)
                         tab_p1, tab_p2 = st.tabs(["Tonnage", "Chiffre d'Affaires"])
                         df_prod_pie = df.groupby(produit_col).agg({ca_col: 'sum', poids_col: 'sum'}).reset_index()
+                        df_prod_pie[produit_col] = _clean_pie_labels(df_prod_pie[produit_col])
                         
                         with tab_p1:
+                            labels = df_prod_pie[produit_col].astype(str).tolist()
+                            pcts = _pie_percent_text(df_prod_pie[poids_col], decimals=1)
+                            text = [
+                                pct if lab == "Non renseigné" else f"{lab}<br>{pct}"
+                                for lab, pct in zip(labels, pcts)
+                            ]
                             fig3_t = px.pie(
                                 df_prod_pie,
                                 values=poids_col,
@@ -3165,10 +3249,22 @@ try:
                                 hole=0.4,
                                 color_discrete_sequence=theme["pie"],
                             )
-                            fig3_t.update_traces(textposition="inside", textinfo="percent")
+                            fig3_t.update_traces(
+                                textposition="inside",
+                                textinfo="none",
+                                insidetextorientation="auto",
+                                text=text,
+                                texttemplate="%{text}",
+                            )
                             fig3_t.update_layout(margin=dict(t=8, b=24, l=8, r=8), uniformtext_minsize=10, uniformtext_mode="hide")
                             st.plotly_chart(apply_plotly_style(fig3_t, kind="pie"), width="stretch")
                         with tab_p2:
+                            labels = df_prod_pie[produit_col].astype(str).tolist()
+                            pcts = _pie_percent_text(df_prod_pie[ca_col], decimals=1)
+                            text = [
+                                pct if lab == "Non renseigné" else f"{lab}<br>{pct}"
+                                for lab, pct in zip(labels, pcts)
+                            ]
                             fig3_ca = px.pie(
                                 df_prod_pie,
                                 values=ca_col,
@@ -3176,7 +3272,13 @@ try:
                                 hole=0.4,
                                 color_discrete_sequence=theme["pie"],
                             )
-                            fig3_ca.update_traces(textposition="inside", textinfo="percent")
+                            fig3_ca.update_traces(
+                                textposition="inside",
+                                textinfo="none",
+                                insidetextorientation="auto",
+                                text=text,
+                                texttemplate="%{text}",
+                            )
                             fig3_ca.update_layout(margin=dict(t=8, b=24, l=8, r=8), uniformtext_minsize=10, uniformtext_mode="hide")
                             st.plotly_chart(apply_plotly_style(fig3_ca, kind="pie"), width="stretch")
 
@@ -3557,6 +3659,13 @@ try:
                             st.info("Aucune donnée pour cette sélection.")
                         else:
                             # Aligné sur le Graphique 3 (camembert avec %)
+                            df_prod[produit_col] = _clean_pie_labels(df_prod[produit_col])
+                            labels = df_prod[produit_col].astype(str).tolist()
+                            pcts = _pie_percent_text(df_prod[poids_col], decimals=1)
+                            text = [
+                                pct if lab == "Non renseigné" else f"{lab}<br>{pct}"
+                                for lab, pct in zip(labels, pcts)
+                            ]
                             fig_pie = px.pie(
                                 df_prod,
                                 values=poids_col,
@@ -3564,7 +3673,13 @@ try:
                                 hole=0.4,
                                 color_discrete_sequence=theme["pie"],
                             )
-                            fig_pie.update_traces(textposition="inside", textinfo="percent")
+                            fig_pie.update_traces(
+                                textposition="inside",
+                                textinfo="none",
+                                insidetextorientation="auto",
+                                text=text,
+                                texttemplate="%{text}",
+                            )
                             fig_pie.update_layout(showlegend=True, margin=dict(t=8, b=24, l=8, r=8), uniformtext_minsize=10, uniformtext_mode="hide")
                             st.plotly_chart(apply_plotly_style(fig_pie, kind="pie"), width="stretch")
 
@@ -3693,7 +3808,7 @@ try:
         # --- Base de données Brute ---
         st.markdown("---")
         st.subheader("Données")
-        tab_raw, tab_filtered = st.tabs(["Brutes (complet)", "Filtrées (selon filtres)"])
+        tab_raw, tab_filtered = st.tabs(["Brutes", "Filtrées"])
         with tab_raw:
             st.dataframe(raw_full_df, width="stretch")
         with tab_filtered:
