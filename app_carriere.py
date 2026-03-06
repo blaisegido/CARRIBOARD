@@ -444,6 +444,7 @@ st.markdown(
     """
     <style>
       :root {
+        color-scheme: light;
         --bg: #fafafa;
         --surface: #ffffff;
         --text: #111827;
@@ -457,6 +458,23 @@ st.markdown(
         --warning: #f59e0b;
       }
 
+      /* Support du mode sombre navigateur/OS (Streamlit peut basculer) */
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --bg: #0b1220;
+          --surface: #0f172a;
+          --text: #f9fafb;
+          --muted: #cbd5e1;
+          --border: rgba(148,163,184,0.25);
+          --shadow1: 0 1px 2px rgba(0,0,0,.35);
+          --shadow2: 0 12px 28px rgba(0,0,0,.45);
+          --accent: #60a5fa;
+          --success: #22c55e;
+          --warning: #fbbf24;
+        }
+      }
+
       html { font-size: 15px; }
       body, .stApp {
         background: var(--bg);
@@ -465,6 +483,37 @@ st.markdown(
         line-height: 1.45;
       }
       *, *::before, *::after { box-sizing: border-box; }
+
+      /* Force les zones principales à suivre nos variables (évite du texte invisible en thème sombre) */
+      div[data-testid="stAppViewContainer"],
+      div[data-testid="stHeader"],
+      div[data-testid="stToolbar"] {
+        background: var(--bg) !important;
+        color: var(--text) !important;
+      }
+      section[data-testid="stSidebar"],
+      section[data-testid="stSidebar"] > div {
+        background: var(--surface) !important;
+        color: var(--text) !important;
+      }
+      #top-banner-wrap {
+        background: var(--surface) !important;
+        border-color: var(--border) !important;
+        color: var(--text) !important;
+      }
+      #top-banner-wrap * { color: var(--text) !important; }
+
+      /* Inputs/Select : garde le contraste même en mode sombre */
+      div[data-baseweb="input"] input,
+      div[data-baseweb="textarea"] textarea,
+      div[data-baseweb="select"] > div {
+        background-color: var(--surface) !important;
+        color: var(--text) !important;
+        border-color: var(--border) !important;
+      }
+      div[data-baseweb="select"] svg { fill: var(--muted) !important; }
+      button[role="tab"] { color: var(--muted) !important; }
+      button[role="tab"][aria-selected="true"] { color: var(--text) !important; }
 
       /* Conteneur principal : largeur max + marges confortables */
       div.block-container {
