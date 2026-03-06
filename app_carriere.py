@@ -22,7 +22,6 @@ import requests
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit.components.v1 as components
-from streamlit_cookies_controller import CookieController
 
 
 def _load_local_module(py_filename: str, module_name: str):
@@ -331,7 +330,6 @@ def _auth_token_secret() -> bytes:
         return str(raw).encode("utf-8")
     return secrets.token_bytes(32)
 
-cookie_controller = CookieController()
 AUTH_TOKEN_STORAGE_KEY = "carriboard_session_token"
 
 
@@ -363,10 +361,7 @@ if _qp_get_first("logout") == "1":
     _logout()
 
 if st.session_state.auth_user is None:
-    try:
-        cookie_tok = cookie_controller.get(AUTH_TOKEN_STORAGE_KEY)
-    except Exception:
-        cookie_tok = None
+    cookie_tok = st.context.cookies.get(AUTH_TOKEN_STORAGE_KEY) if hasattr(st, "context") and hasattr(st.context, "cookies") else None
     token = _qp_get_first("t") or cookie_tok
     if token and hasattr(auth, "verify_session_token") and hasattr(auth, "get_user"):
         try:
@@ -391,8 +386,8 @@ if st.session_state.auth_user is None:
 if st.session_state.auth_user is None:
     should_clear_ls = bool(st.session_state.get("_clear_auth_local_storage"))
     if should_clear_ls:
-        cookie_controller.remove(AUTH_TOKEN_STORAGE_KEY)
         st.session_state._clear_auth_local_storage = False
+        components.html(f'<script>document.cookie = "{AUTH_TOKEN_STORAGE_KEY}=; path=/; max-age=0";</script>', height=0)
 
     components.html(
         """
@@ -496,7 +491,23 @@ if st.session_state.auth_user is None:
 
 # Sauvegarde de cookie native
 if st.session_state.get("auth_token"):
-    cookie_controller.set(AUTH_TOKEN_STORAGE_KEY, st.session_state.get("auth_token"), max_age=60*60*24*30)
+    components.html(
+        f"""
+        <script>
+        document.cookie = "{AUTH_TOKEN_STORAGE_KEY}={st.session_state.auth_token}; path=/; max-age=2592000";
+        try {{
+          const rootWin = window.parent || window;
+          const url = new URL(String(rootWin.location.href || ""));
+          let changed = false;
+          ["t", "autologin", "autologin_failed", "logout"].forEach(k => {{
+            if (url.searchParams.has(k)) {{ url.searchParams.delete(k); changed = true; }}
+          }});
+          if (changed) rootWin.history.replaceState(null, "", url.toString());
+        }} catch(e) {{}}
+        </script>
+        """,
+        height=0
+    )
 
 # Bandeau (visible par tous les utilisateurs connectés)
 st.markdown(
