@@ -361,7 +361,11 @@ if _qp_get_first("logout") == "1":
     _logout()
 
 if st.session_state.auth_user is None:
-    cookie_tok = st.context.cookies.get(AUTH_TOKEN_STORAGE_KEY) if hasattr(st, "context") and hasattr(st.context, "cookies") else None
+    # Si on vient de se déconnecter, on ignore le cookie (il est en train d'être supprimé côté client)
+    if st.session_state.get("_clear_auth_local_storage"):
+        cookie_tok = None
+    else:
+        cookie_tok = st.context.cookies.get(AUTH_TOKEN_STORAGE_KEY) if hasattr(st, "context") and hasattr(st.context, "cookies") else None
     token = _qp_get_first("t") or cookie_tok
     if token and hasattr(auth, "verify_session_token") and hasattr(auth, "get_user"):
         try:
