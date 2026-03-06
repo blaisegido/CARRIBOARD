@@ -363,7 +363,11 @@ if _qp_get_first("logout") == "1":
     _logout()
 
 if st.session_state.auth_user is None:
-    token = _qp_get_first("t") or cookie_controller.get(AUTH_TOKEN_STORAGE_KEY)
+    try:
+        cookie_tok = cookie_controller.get(AUTH_TOKEN_STORAGE_KEY)
+    except Exception:
+        cookie_tok = None
+    token = _qp_get_first("t") or cookie_tok
     if token and hasattr(auth, "verify_session_token") and hasattr(auth, "get_user"):
         try:
             uid = auth.verify_session_token(token, _auth_token_secret(), db_path=AUTH_DB_PATH)  # type: ignore[call-arg]
