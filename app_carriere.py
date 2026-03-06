@@ -3009,12 +3009,23 @@ try:
         
         st.sidebar.header("Filtres")
         
-        # Ajoute un filtre "Semaine" pour coller au visuel Excel
+        # Ajoute un filtre "Semaine" (selection multiple) pour coller au visuel Excel
         if 'Semaine' in df.columns:
-            semaines = ['Toutes'] + sorted(list(df['Semaine'].dropna().unique()))
-            semaine_choisie = st.sidebar.selectbox("Numéro semaine", semaines)
-            if semaine_choisie != 'Toutes':
-                df = df[df['Semaine'] == semaine_choisie]
+            semaine_options = sorted(df['Semaine'].dropna().unique().tolist())
+
+            semaines_key = "filter_semaines"
+            if semaines_key in st.session_state:
+                st.session_state[semaines_key] = [
+                    s for s in st.session_state[semaines_key] if s in semaine_options
+                ]
+            semaines_choisies = st.sidebar.multiselect(
+                "Numéro(s) de semaine",
+                options=semaine_options,
+                key=semaines_key,
+                help="Sélection multiple. Laisser vide = toutes les semaines.",
+            )
+            if semaines_choisies:
+                df = df[df['Semaine'].isin(semaines_choisies)]
                 
         if 'Année' in df.columns:
             annees = ['Toutes'] + list(df['Année'].dropna().unique())
