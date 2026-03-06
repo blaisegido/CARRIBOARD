@@ -327,16 +327,6 @@ if _qp_get_first("logout") == "1":
     _logout()
 
 if st.session_state.auth_user is None:
-    token = _qp_get_first("t")
-    if token and hasattr(auth, "verify_session_token") and hasattr(auth, "get_user"):
-        uid = auth.verify_session_token(token, _auth_token_secret())
-        if uid is not None:
-            restored = auth.get_user(AUTH_DB_PATH, uid)
-            if restored is not None:
-                st.session_state.auth_user = restored
-                st.session_state.auth_token = token
-
-if st.session_state.auth_user is None:
     components.html(
         """
         <script>
@@ -383,19 +373,13 @@ if st.session_state.auth_user is None:
         with st.container(border=True):
             tab_login, tab_signup = st.tabs(["Connexion", "Inscription"])
 
-            def _on_auth_success(user_obj: auth.User, *, remember: bool) -> None:
+            def _on_auth_success(user_obj: auth.User) -> None:
                 st.session_state.auth_user = user_obj
-                if remember and hasattr(auth, "issue_session_token"):
-                    tok = auth.issue_session_token(
-                        user_obj.id,
-                        _auth_token_secret(),
-                        max_age_seconds=60 * 60 * 24 * 30,
-                    )
-                    st.session_state.auth_token = tok
-                    _qp_write({"t": tok})
-                else:
-                    st.session_state.auth_token = None
-                    _qp_write({})
+                st.session_state.auth_token = None
+                params = _qp_read()
+                params.pop("t", None)
+                params.pop("logout", None)
+                _qp_write(params)
                 st.session_state.pop("active_project_id", None)
                 st.session_state.pop("rename_project_id", None)
                 st.session_state.pop("local_data_source", None)
@@ -405,12 +389,11 @@ if st.session_state.auth_user is None:
                 with st.form("login_form_modern", clear_on_submit=False):
                     login_username = st.text_input("Nom d'utilisateur", key="login_username")
                     login_password = st.text_input("Mot de passe", type="password", key="login_password")
-                    remember = st.checkbox("Rester connecté (recommandé)", value=True, key="remember_me")
                     submit = st.form_submit_button("Se connecter", width="stretch", type="primary")
                 if submit:
                     try:
                         user_obj = auth.authenticate(AUTH_DB_PATH, login_username, login_password)
-                        _on_auth_success(user_obj, remember=bool(remember))
+                        _on_auth_success(user_obj)
                     except auth.AuthError as e:
                         st.error(str(e))
 
@@ -419,7 +402,6 @@ if st.session_state.auth_user is None:
                     signup_username = st.text_input("Nom d'utilisateur", key="signup_username")
                     signup_password = st.text_input("Mot de passe (min 8)", type="password", key="signup_password")
                     signup_password2 = st.text_input("Confirmer", type="password", key="signup_password2")
-                    remember2 = st.checkbox("Rester connecté (recommandé)", value=True, key="remember_me2")
                     submit2 = st.form_submit_button("Créer le compte", width="stretch", type="primary")
                 if submit2:
                     if signup_password != signup_password2:
@@ -427,7 +409,7 @@ if st.session_state.auth_user is None:
                     else:
                         try:
                             user_obj = auth.create_user(AUTH_DB_PATH, signup_username, signup_password)
-                            _on_auth_success(user_obj, remember=bool(remember2))
+                            _on_auth_success(user_obj)
                         except auth.AuthError as e:
                             st.error(str(e))
 
@@ -1123,7 +1105,13 @@ st.sidebar.markdown(
         <div class="u-name">{html.escape(user.username)}</div>
         <div class="u-role">{html.escape(user.role)}</div>
       </div>
-      <div class="u-logout"><a href="?logout=1">Se déconnecter</a></div>
+      <div class="u-logout">
+        <a
+          href="?logout=1"
+          target="_self"
+          onclick="window.location.href='?logout=1'; return false;"
+        >Se déconnecter</a>
+      </div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1343,8 +1331,7 @@ if uploaded_file is not None:
     st.session_state.active_project_id = new_id
     st.session_state.rename_project_id = new_id
     st.session_state.sidebar_upload_counter += 1
-    tok = st.session_state.auth_token or _qp_get_first("t")
-    _qp_set(t=tok, p=new_id)
+    _qp_set(t=None, p=new_id)
     st.rerun()
 
 # Liste des extractions (pour la barre du haut)
@@ -1418,8 +1405,7 @@ if not st.session_state.active_project_id or active_project is None:
                     if st.button("Ouvrir", key=f"open_project_{p.id}", type="primary", width="stretch"):
                         st.session_state.active_project_id = p.id
                         st.session_state.rename_project_id = None
-                        tok = st.session_state.auth_token or _qp_get_first("t")
-                        _qp_set(t=tok, p=p.id)
+                        _qp_set(t=None, p=p.id)
                         st.rerun()
 
         st.divider()
@@ -1439,8 +1425,7 @@ if not st.session_state.active_project_id or active_project is None:
         st.session_state.active_project_id = new_id
         st.session_state.rename_project_id = new_id
         st.session_state.picker_upload_counter += 1
-        tok = st.session_state.auth_token or _qp_get_first("t")
-        _qp_set(t=tok, p=new_id)
+        _qp_set(t=None, p=new_id)
         st.rerun()
 
     st.stop()
@@ -1578,8 +1563,7 @@ with bar_right:
                                 st.session_state.rename_project_id = None
                                 st.session_state.delete_project_id = None
                                 st.session_state.close_extractions_popover = True
-                                tok = st.session_state.auth_token or _qp_get_first("t")
-                                _qp_set(t=tok, p=p.id)
+                                _qp_set(t=None, p=p.id)
                                 st.rerun()
                         with a2:
                             if st.button("✎", key=f"rename_project_{p.id}", width="content", help="Renommer"):
@@ -1587,8 +1571,7 @@ with bar_right:
                                 st.session_state.rename_project_id = p.id
                                 st.session_state.delete_project_id = None
                                 st.session_state.close_extractions_popover = True
-                                tok = st.session_state.auth_token or _qp_get_first("t")
-                                _qp_set(t=tok, p=p.id)
+                                _qp_set(t=None, p=p.id)
                                 st.rerun()
                         with a3:
                             if st.button("🗑", key=f"delete_project_{p.id}", width="content", help="Supprimer"):
@@ -1665,8 +1648,7 @@ if st.session_state.show_top_uploader:
         st.session_state.rename_project_id = new_id
         st.session_state.top_upload_counter += 1
         st.session_state.show_top_uploader = False
-        tok = st.session_state.auth_token or _qp_get_first("t")
-        _qp_set(t=tok, p=new_id)
+        _qp_set(t=None, p=new_id)
         st.rerun()
 
 active_project = projects.get_project(PROJECT_DB_PATH, user_id, st.session_state.active_project_id) if st.session_state.active_project_id else None
@@ -1710,8 +1692,7 @@ if st.session_state.delete_project_id:
 
                 st.session_state.rename_project_id = None
                 st.session_state.delete_project_id = None
-                tok = st.session_state.auth_token or _qp_get_first("t")
-                _qp_set(t=tok, p=st.session_state.active_project_id)
+                _qp_set(t=None, p=st.session_state.active_project_id)
                 st.toast("Extraction supprimée.")
                 st.rerun()
 
@@ -3398,8 +3379,15 @@ try:
                         if df_prod.empty:
                             st.info("Aucune donnée pour cette sélection.")
                         else:
-                            fig_pie = px.pie(df_prod, values=poids_col, names=produit_col, hole=0.3, color_discrete_sequence=theme["pie"])
-                            fig_pie.update_traces(textposition='inside', textinfo='none') # Masque le texte interne (style Excel)
+                            # Aligné sur le Graphique 3 (camembert avec %)
+                            fig_pie = px.pie(
+                                df_prod,
+                                values=poids_col,
+                                names=produit_col,
+                                hole=0.4,
+                                color_discrete_sequence=theme["pie"],
+                            )
+                            fig_pie.update_traces(textposition="inside", textinfo="percent")
                             fig_pie.update_layout(showlegend=True, margin=dict(t=8, b=24, l=8, r=8), uniformtext_minsize=10, uniformtext_mode="hide")
                             st.plotly_chart(apply_plotly_style(fig_pie, kind="pie"), width="stretch")
 
