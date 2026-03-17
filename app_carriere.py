@@ -2978,8 +2978,16 @@ try:
                     ds_path.parent.mkdir(parents=True, exist_ok=True)
                     ds_path.write_bytes(file_data)
         
+        raw_full_df = None
+        mapping = None
         if uploaded_file is not None or (ds_path and ds_path.exists()):
             raw_full_df, mapping = load_data(data_source, clean_version=DATA_CLEAN_VERSION)
+        
+        if raw_full_df is None:
+            st.title("Veuillez charger un fichier")
+            st.info("Veuillez charger un fichier Excel (.xls, .xlsx) depuis le panneau de gauche.")
+            st.stop()
+
         df = raw_full_df.copy()
 
         if 'client' in mapping and mapping['client'] in df.columns:
