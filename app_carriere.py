@@ -40,6 +40,7 @@ def _load_local_module(py_filename: str, module_name: str):
 # Force le chargement des modules locaux (évite les collisions avec des paquets installés nommés "auth"/"projects").
 auth = _load_local_module("auth_supabase.py", "carriboard_auth")
 projects = _load_local_module("projects_supabase.py", "carriboard_projects")
+storage = _load_local_module("storage_supabase.py", "carriboard_storage")
 
 # Incrémenter cette valeur pour invalider le cache Streamlit quand les règles de nettoyage changent.
 DATA_CLEAN_VERSION = "2026-03-02-01"
@@ -1478,7 +1479,7 @@ def _create_project_from_upload(uploaded, theme_idx: int) -> str:
         except Exception:
             default_name = f"Extraction du {stats['date_min']} - {stem}"
 
-    projects.create_project(SB_CLIENT,
+        projects.create_project(SB_CLIENT,
         project_id=project_id,
         user_id=user_id,
         name=default_name,
@@ -1491,6 +1492,10 @@ def _create_project_from_upload(uploaded, theme_idx: int) -> str:
         ca_total=stats.get("ca_total"),
         theme_idx=int(theme_idx),
     )
+    
+    # Upload to Supabase Storage for persistence
+    storage.upload_file(SB_CLIENT, user_id, project_id, saved_path.name, data)
+    
     return project_id
 
 
@@ -1898,8 +1903,9 @@ if st.session_state.delete_project_id:
             except projects.ProjectError as e:
                 st.error(str(e))
             else:
-                # Nettoyage des fichiers importés quand ils sont stockés sous PROJECT_FILES_DIR
+                # Nettoyage des fichiers importés
                 try:
+                    storage.delete_project_files(SB_CLIENT, user_id, target.id)
                     project_dir = PROJECT_FILES_DIR / f"user_{user_id}" / target.id
                     if project_dir.exists():
                         shutil.rmtree(project_dir, ignore_errors=True)
@@ -2962,8 +2968,18 @@ else:
         pass
 
 try:
-    if uploaded_file is not None or (isinstance(data_source, str) and os.path.exists(data_source)):
-        raw_full_df, mapping = load_data(data_source, clean_version=DATA_CLEAN_VERSION)
+    if uploaded_file is not None or (isinstance(data_source, (str, Path))):
+        # Verification de la présence locale ou restauration depuis Supabase
+        ds_path = Path(data_source) if isinstance(data_source, (str, Path)) else None
+        if ds_path and not ds_path.exists() and active_project:
+            with st.spinner("Restauration du fichier depuis le cloud..."):
+                file_data = storage.download_file(SB_CLIENT, user_id, active_project.id, ds_path.name)
+                if file_data:
+                    ds_path.parent.mkdir(parents=True, exist_ok=True)
+                    ds_path.write_bytes(file_data)
+        
+        if uploaded_file is not None or (ds_path and ds_path.exists()):
+            raw_full_df, mapping = load_data(data_source, clean_version=DATA_CLEAN_VERSION)
         df = raw_full_df.copy()
 
         if 'client' in mapping and mapping['client'] in df.columns:
@@ -3795,6 +3811,7 @@ try:
         
 except Exception as e:
     st.error(f"Une erreur s'est produite lors de l'analyse du fichier : {e}")
+
 
 
 

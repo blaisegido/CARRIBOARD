@@ -1,0 +1,40 @@
+﻿from typing import Optional
+from supabase import Client
+
+BUCKET_NAME = "projects"
+
+def upload_file(client: Client, user_id: int, project_id: str, remote_path: str, data: bytes) -> bool:
+    """Uploads a file to Supabase Storage."""
+    try:
+        full_storage_path = f"user_{user_id}/{project_id}/{remote_path}"
+        client.storage.from_(BUCKET_NAME).upload(
+            path=full_storage_path,
+            file=data,
+            file_options={"upsert": "true"}
+        )
+        return True
+    except Exception:
+        return False
+
+def download_file(client: Client, user_id: int, project_id: str, remote_path: str) -> Optional[bytes]:
+    """Downloads a file from Supabase Storage."""
+    try:
+        full_storage_path = f"user_{user_id}/{project_id}/{remote_path}"
+        res = client.storage.from_(BUCKET_NAME).download(full_storage_path)
+        return res
+    except Exception:
+        return None
+
+def delete_project_files(client: Client, user_id: int, project_id: str) -> bool:
+    """Deletes all files associated with a project in Supabase Storage."""
+    try:
+        prefix = f"user_{user_id}/{project_id}/"
+        files = client.storage.from_(BUCKET_NAME).list(f"user_{user_id}/{project_id}")
+        if not files:
+            return True
+            
+        file_paths = [f"{prefix}{f['name']}" for f in files]
+        client.storage.from_(BUCKET_NAME).remove(file_paths)
+        return True
+    except Exception:
+        return False
