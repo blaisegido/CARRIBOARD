@@ -1,4 +1,4 @@
-import faulthandler
+﻿import faulthandler
 faulthandler.enable()
 
 import os
@@ -37,8 +37,8 @@ def _load_local_module(py_filename: str, module_name: str):
 
 
 # Force le chargement des modules locaux (évite les collisions avec des paquets installés nommés "auth"/"projects").
-auth = _load_local_module("auth.py", "carriboard_auth")
-projects = _load_local_module("projects.py", "carriboard_projects")
+auth = _load_local_module("auth_supabase.py", "carriboard_auth")
+projects = _load_local_module("projects_supabase.py", "carriboard_projects")
 
 # Incrémenter cette valeur pour invalider le cache Streamlit quand les règles de nettoyage changent.
 DATA_CLEAN_VERSION = "2026-03-02-01"
@@ -251,7 +251,7 @@ def _data_root_cached() -> Path:
 
 
 DATA_ROOT = _data_root_cached()
-AUTH_DB_PATH = DATA_ROOT / "users.sqlite3"
+# AUTH_DB_PATH removed (Supabase migration)
 
 
 @st.cache_resource
@@ -337,7 +337,7 @@ def _logout() -> None:
     tok = st.session_state.get("auth_token")
     if tok and hasattr(auth, "revoke_session_token"):
         try:
-            auth.revoke_session_token(AUTH_DB_PATH, str(tok))
+            auth.revoke_session_token(SB_CLIENT, str(tok))
         except Exception:
             pass
     st.session_state.auth_user = None
@@ -470,7 +470,7 @@ if st.session_state.auth_user is None:
                     submit = st.form_submit_button("Se connecter", width="stretch", type="primary")
                 if submit:
                     try:
-                        user_obj = auth.authenticate(AUTH_DB_PATH, login_username, login_password)
+                        user_obj = auth.authenticate(SB_CLIENT, login_username, login_password)
                         _on_auth_success(user_obj)
                     except auth.AuthError as e:
                         st.error(str(e))
@@ -486,7 +486,7 @@ if st.session_state.auth_user is None:
                         st.error("Les mots de passe ne correspondent pas.")
                     else:
                         try:
-                            user_obj = auth.create_user(AUTH_DB_PATH, signup_username, signup_password)
+                            user_obj = auth.create_user(SB_CLIENT, signup_username, signup_password)
                             _on_auth_success(user_obj)
                         except auth.AuthError as e:
                             st.error(str(e))
@@ -1343,9 +1343,9 @@ st.sidebar.caption(f"Données: {DATA_CLEAN_VERSION} • Script: {os.path.abspath
 if (os.environ.get("CARRIBOARD_DEBUG") or "").strip() == "1" or _qp_get_first("debug") == "1":
     with st.sidebar.expander("Debug", expanded=False):
         st.caption(f"DATA_ROOT: {DATA_ROOT}")
-        st.caption(f"AUTH_DB_PATH: {AUTH_DB_PATH}")
+        st.caption("Supabase Connection: Active")
 
-PROJECT_DB_PATH = DATA_ROOT / "projects.sqlite3"
+# PROJECT_DB_PATH removed (Supabase migration)
 PROJECT_FILES_DIR = DATA_ROOT / "project_files"
 
 
@@ -1476,8 +1476,7 @@ def _create_project_from_upload(uploaded, theme_idx: int) -> str:
         except Exception:
             default_name = f"Extraction du {stats['date_min']} - {stem}"
 
-    projects.create_project(
-        PROJECT_DB_PATH,
+    projects.create_project(SB_CLIENT,
         project_id=project_id,
         user_id=user_id,
         name=default_name,
@@ -1494,7 +1493,7 @@ def _create_project_from_upload(uploaded, theme_idx: int) -> str:
 
 
 def _ensure_default_project_if_needed() -> None:
-    existing = projects.list_projects(PROJECT_DB_PATH, user_id)
+    existing = projects.list_projects(SB_CLIENT, user_id)
     if not (_default_extraction_enabled() and fichier_defaut and os.path.exists(fichier_defaut)):
         return
 
@@ -1518,8 +1517,7 @@ def _ensure_default_project_if_needed() -> None:
         stats = {"date_min": None, "date_max": None, "nb_livraisons": None, "tonnage_total": None, "ca_total": None}
 
     project_id = str(uuid4())
-    projects.create_project(
-        PROJECT_DB_PATH,
+    projects.create_project(SB_CLIENT,
         project_id=project_id,
         user_id=user_id,
         name="Extraction pont bascule retraité",
@@ -1544,7 +1542,7 @@ uploaded_file = st.sidebar.file_uploader(
     key=f"sidebar_uploader_{st.session_state.sidebar_upload_counter}",
 )
 if uploaded_file is not None:
-    current = projects.get_project(PROJECT_DB_PATH, user_id, st.session_state.active_project_id) if st.session_state.active_project_id else None
+    current = projects.get_project(SB_CLIENT, user_id, st.session_state.active_project_id) if st.session_state.active_project_id else None
     next_theme_idx = (int(current.theme_idx) + 1) % len(THEMES) if current else 0
     new_id = _create_project_from_upload(uploaded_file, theme_idx=next_theme_idx)
     st.session_state.active_project_id = new_id
@@ -1554,7 +1552,7 @@ if uploaded_file is not None:
     st.rerun()
 
 # Liste des extractions (pour la barre du haut)
-all_projects = projects.list_projects(PROJECT_DB_PATH, user_id)
+all_projects = projects.list_projects(SB_CLIENT, user_id)
 
 # Après déploiement / 1ère ouverture, on sélectionne automatiquement l'extraction par défaut
 # (pont bascule retraité) si l'utilisateur n'a rien sélectionné.
@@ -1574,14 +1572,14 @@ if _default_extraction_enabled() and fichier_defaut and os.path.exists(fichier_d
 
 if not st.session_state.active_project_id:
     requested = _qp_get_first("p")
-    if requested and projects.get_project(PROJECT_DB_PATH, user_id, requested) is not None:
+    if requested and projects.get_project(SB_CLIENT, user_id, requested) is not None:
         st.session_state.active_project_id = requested
     else:
         if requested:
             _qp_set(p=None)
         if default_project_id:
             st.session_state.active_project_id = default_project_id
-active_project = projects.get_project(PROJECT_DB_PATH, user_id, st.session_state.active_project_id) if st.session_state.active_project_id else None
+active_project = projects.get_project(SB_CLIENT, user_id, st.session_state.active_project_id) if st.session_state.active_project_id else None
 
 if not st.session_state.active_project_id or active_project is None:
     st.title("Extractions")
@@ -1871,10 +1869,10 @@ if st.session_state.show_top_uploader:
         _qp_set(t=None, p=new_id)
         st.rerun()
 
-active_project = projects.get_project(PROJECT_DB_PATH, user_id, st.session_state.active_project_id) if st.session_state.active_project_id else None
+active_project = projects.get_project(SB_CLIENT, user_id, st.session_state.active_project_id) if st.session_state.active_project_id else None
 
 if st.session_state.delete_project_id:
-    target = projects.get_project(PROJECT_DB_PATH, user_id, st.session_state.delete_project_id)
+    target = projects.get_project(SB_CLIENT, user_id, st.session_state.delete_project_id)
     if target is None:
         st.session_state.delete_project_id = None
     else:
@@ -1894,7 +1892,7 @@ if st.session_state.delete_project_id:
 
         if confirm_delete:
             try:
-                projects.delete_project(PROJECT_DB_PATH, user_id=user_id, project_id=target.id)
+                projects.delete_project(SB_CLIENT, user_id=user_id, project_id=target.id)
             except projects.ProjectError as e:
                 st.error(str(e))
             else:
@@ -1930,7 +1928,7 @@ if active_project and st.session_state.rename_project_id == active_project.id:
             cancel = st.form_submit_button("Annuler", width="stretch")
     if ok:
         try:
-            saved = projects.rename_project(PROJECT_DB_PATH, user_id=user_id, project_id=active_project.id, new_name=new_name)
+            saved = projects.rename_project(SB_CLIENT, user_id=user_id, project_id=active_project.id, new_name=new_name)
             st.session_state.rename_project_id = None
             st.toast(f"Dossier renommé : {saved}")
             st.rerun()
@@ -3537,8 +3535,7 @@ try:
                                 try:
                                     if active_project and saved_path:
                                         stats_u = _compute_project_stats(updated_full_df, mapping)
-                                        projects.update_project_data(
-                                            PROJECT_DB_PATH,
+                                        projects.update_project_data(SB_CLIENT,
                                             user_id=user_id,
                                             project_id=active_project.id,
                                             data_path=str(saved_path),
@@ -3796,3 +3793,10 @@ try:
         
 except Exception as e:
     st.error(f"Une erreur s'est produite lors de l'analyse du fichier : {e}")
+
+
+
+
+
+
+

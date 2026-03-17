@@ -5,3 +5,5 @@ openpyxl>=3.1
 xlsxwriter>=3.2
 matplotlib>=3.8
 streamlit-cookies-controller==0.0.4
+supabase>=2.10.0
+python-dotenv>=1.0.0
