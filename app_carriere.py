@@ -22,6 +22,7 @@ import requests
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit.components.v1 as components
+from supabase import create_client, Client
 
 
 def _load_local_module(py_filename: str, module_name: str):
@@ -251,15 +252,16 @@ def _data_root_cached() -> Path:
 
 
 DATA_ROOT = _data_root_cached()
-# AUTH_DB_PATH removed (Supabase migration)
-
 
 @st.cache_resource
-def _auth_db_ready(db_path: Path) -> None:
-    auth.init_db(db_path)
+def _supabase_client() -> Client:
+    url = st.secrets.get("SUPABASE_URL") or os.environ.get("SUPABASE_URL")
+    key = st.secrets.get("SUPABASE_KEY") or os.environ.get("SUPABASE_KEY")
+    if not url: url = "https://wbiashsnyftvjxbdqznh.supabase.co"
+    if not key: key = "sb_publishable_HWr5LyhovG74L_iR7uuBnQ_F6BNDgLy"
+    return create_client(url, key)
 
-
-_auth_db_ready(AUTH_DB_PATH)
+SB_CLIENT = _supabase_client()
 
 
 def _qp_read() -> dict:
@@ -369,12 +371,12 @@ if st.session_state.auth_user is None:
     token = _qp_get_first("t") or cookie_tok
     if token and hasattr(auth, "verify_session_token") and hasattr(auth, "get_user"):
         try:
-            uid = auth.verify_session_token(token, _auth_token_secret(), db_path=AUTH_DB_PATH)  # type: ignore[call-arg]
+            uid = auth.verify_session_token(token, _auth_token_secret(), client=SB_CLIENT)  # type: ignore[call-arg]
         except TypeError:
             uid = auth.verify_session_token(token, _auth_token_secret())
 
         if uid is not None:
-            restored = auth.get_user(AUTH_DB_PATH, uid)
+            restored = auth.get_user(SB_CLIENT, uid)
             if restored is not None:
                 st.session_state.auth_user = restored
                 st.session_state.auth_token = token
@@ -1354,7 +1356,7 @@ def _projects_db_ready(db_path: Path) -> None:
     projects.init_db(db_path)
 
 
-_projects_db_ready(PROJECT_DB_PATH)
+# Project DB initialized via Supabase
 
 user_id = int(st.session_state.auth_user.id)
 
@@ -3793,6 +3795,7 @@ try:
         
 except Exception as e:
     st.error(f"Une erreur s'est produite lors de l'analyse du fichier : {e}")
+
 
 
 
