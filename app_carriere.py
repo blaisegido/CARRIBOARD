@@ -1510,7 +1510,7 @@ def _ensure_default_project_if_needed() -> None:
         default_abs = os.path.abspath(str(fichier_defaut))
         for p in (existing or []):
             try:
-                if os.path.abspath(str(p.data_path)) == default_abs:
+                if os.path.abspath(str(p.data_path)) == default_abs or p.source_filename == DEFAULT_EXTRACTION_SOURCE_NAME:
                     return
             except Exception:
                 continue
@@ -1569,7 +1569,7 @@ if _default_extraction_enabled() and fichier_defaut and os.path.exists(fichier_d
         default_abs = os.path.abspath(str(fichier_defaut))
         for p in (all_projects or []):
             try:
-                if os.path.abspath(str(p.data_path)) == default_abs:
+                if os.path.abspath(str(p.data_path)) == default_abs or p.source_filename == DEFAULT_EXTRACTION_SOURCE_NAME:
                     default_project_id = p.id
                     break
             except Exception:
@@ -2973,10 +2973,15 @@ try:
         ds_path = Path(data_source) if isinstance(data_source, (str, Path)) else None
         if ds_path and not ds_path.exists() and active_project:
             with st.spinner("Restauration du fichier depuis le cloud..."):
-                file_data = storage.download_file(SB_CLIENT, user_id, active_project.id, ds_path.name)
-                if file_data:
-                    ds_path.parent.mkdir(parents=True, exist_ok=True)
-                    ds_path.write_bytes(file_data)
+                try:
+                    file_data = storage.download_file(SB_CLIENT, user_id, active_project.id, ds_path.name)
+                    if file_data:
+                        ds_path.parent.mkdir(parents=True, exist_ok=True)
+                        ds_path.write_bytes(file_data)
+                        data_source = str(ds_path.resolve())
+                        st.session_state.local_data_source = data_source
+                except Exception as e:
+                    st.error(f"Erreur lors de la restauration du fichier: {e}")
         
         raw_full_df = None
         mapping = None
