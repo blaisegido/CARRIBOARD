@@ -2954,6 +2954,14 @@ try:
     if uploaded_file is not None or (isinstance(data_source, (str, Path))):
         # Verification de la présence locale ou restauration depuis Supabase
         ds_path = Path(data_source) if isinstance(data_source, (str, Path)) else None
+        
+        # --- FIX: extraction par defaut ---
+        if active_project and active_project.source_filename == DEFAULT_EXTRACTION_SOURCE_NAME:
+            if fichier_defaut and os.path.exists(fichier_defaut):
+                ds_path = Path(fichier_defaut)
+                data_source = str(ds_path)
+                st.session_state.local_data_source = data_source
+        # ----------------------------------
         if ds_path and not ds_path.exists() and active_project:
             with st.spinner("Restauration du fichier depuis le cloud..."):
                 try:
