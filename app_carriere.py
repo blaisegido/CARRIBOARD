@@ -1220,14 +1220,9 @@ dossier_app = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_EXTRACTION_SOURCE_NAME = "extraction pont bascule retraité.xlsx"
 
 def _default_extraction_enabled() -> bool:
-    raw = (os.environ.get("CARRIBOARD_ENABLE_DEFAULT_EXTRACTION") or "").strip()
-    if not raw:
-        try:
-            raw = str(st.secrets.get("CARRIBOARD_ENABLE_DEFAULT_EXTRACTION") or "").strip()  # type: ignore[attr-defined]
-        except Exception:
-            raw = ""
-    raw = (raw or "").strip().casefold()
-    return raw in ("1", "true", "yes", "on")
+    # Always return True so the default extraction works on Streamlit Cloud
+    # without needing secrets explicitly set.
+    return True
 
 
 def _get_default_extraction_url() -> Optional[str]:
