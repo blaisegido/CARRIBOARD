@@ -1478,7 +1478,7 @@ def _create_project_from_upload(uploaded, theme_idx: int) -> str:
         project_id=project_id,
         user_id=user_id,
         name=default_name,
-        data_path=str(saved_path),
+        data_path=f"project_files/user_{user_id}/{project_id}/{saved_path.name}",
         source_filename=original_name,
         date_min=stats.get("date_min"),
         date_max=stats.get("date_max"),
@@ -2948,7 +2948,12 @@ else:
 try:
     if uploaded_file is not None or (isinstance(data_source, (str, Path))):
         # Verification de la présence locale ou restauration depuis Supabase
-        ds_path = Path(data_source) if isinstance(data_source, (str, Path)) else None
+        # --- Résolution du chemin (gestion chemins relatifs vs absolus trans-plateformes) ---
+        if isinstance(data_source, (str, Path)) and not os.path.isabs(str(data_source)) and "project_files" in str(data_source):
+            ds_path = DATA_ROOT / str(data_source).replace("\\", "/")
+        else:
+            ds_path = Path(data_source) if isinstance(data_source, (str, Path)) else None
+        # ----------------------------------------------------------------------------------
         
         # --- FIX: extraction par defaut ---
         if active_project and active_project.source_filename == DEFAULT_EXTRACTION_SOURCE_NAME:
@@ -2960,7 +2965,7 @@ try:
         if ds_path and not ds_path.exists() and active_project:
             with st.spinner("Restauration du fichier depuis le cloud..."):
                 try:
-                    file_data = storage.download_file(SB_CLIENT, user_id, active_project.id, ds_path.name)
+                    file_data = storage.download_file(SB_CLIENT, user_id, active_project.id, Path(str(active_project.data_path)).name)
                     if file_data:
                         ds_path.parent.mkdir(parents=True, exist_ok=True)
                         ds_path.write_bytes(file_data)
@@ -3555,7 +3560,7 @@ try:
                                         projects.update_project_data(SB_CLIENT,
                                             user_id=user_id,
                                             project_id=active_project.id,
-                                            data_path=str(saved_path),
+                                            data_path=f"project_files/user_{user_id}/{project_id}/{saved_path.name}",
                                             date_min=stats_u.get("date_min"),
                                             date_max=stats_u.get("date_max"),
                                             nb_livraisons=stats_u.get("nb_livraisons"),

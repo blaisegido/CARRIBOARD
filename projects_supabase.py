@@ -1,4 +1,4 @@
-﻿import re
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -35,14 +35,35 @@ def _normalize_name(name: str) -> tuple[str, str]:
         cleaned = cleaned[:80].rstrip()
     return cleaned, cleaned.casefold()
 
+def _normalize_path_for_storage(path_str: str) -> str:
+    # Convertit les backslashes en slashs pour la compatibilité Windows/Linux en base de données.
+    if not path_str:
+        return ""
+    return str(path_str).replace("\\", "/")
+
 def _project_from_row(row: dict) -> Project:
+    raw_path = str(row["data_path"])
+    
+    # Tentative de migration automatique des anciens chemins absolus
+    # On ne garde que la partie après "project_files" si présente.
+    if "project_files" in raw_path:
+        try:
+            # Sépare par project_files (cas Windows ou Linux)
+            parts = re.split(r"[\\/]+project_files[\\/]+", raw_path)
+            if len(parts) > 1:
+                # Reconstruit un chemin relatif propre
+                inner = parts[1].replace("\\", "/").strip("/")
+                raw_path = f"project_files/{inner}"
+        except Exception:
+            pass
+            
     return Project(
         id=str(row["id"]),
         user_id=int(row["user_id"]),
         name=str(row["name"]),
         name_canon=str(row.get("name_canon", row["name"].casefold())),
         created_at=str(row["created_at"]),
-        data_path=str(row["data_path"]),
+        data_path=_normalize_path_for_storage(raw_path),
         source_filename=row.get("source_filename"),
         date_min=row.get("date_min"),
         date_max=row.get("date_max"),
@@ -115,7 +136,7 @@ def create_project(
             "name": unique,
             "name_canon": unique.casefold(),
             "created_at": _now_iso(),
-            "data_path": str(data_path),
+            "data_path": _normalize_path_for_storage(data_path),
             "source_filename": source_filename,
             "date_min": date_min,
             "date_max": date_max,
@@ -157,7 +178,7 @@ def update_project_data(
 ) -> None:
     try:
         client.table("projects").update({
-            "data_path": str(data_path),
+            "data_path": _normalize_path_for_storage(data_path),
             "date_min": date_min,
             "date_max": date_max,
             "nb_livraisons": nb_livraisons,
