@@ -2952,7 +2952,6 @@ components.html(
                 state.busy = false;
               }}
            }};
-        }}
         btn.style.position = "relative";
         btn.style.background = "transparent";
         btn.style.border = "1px solid #d0d5dd";
