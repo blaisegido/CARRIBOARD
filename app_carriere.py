@@ -2092,9 +2092,11 @@ components.html(
        }}
 
        function ensureButton() {{
-         let btn = window.parent.document.getElementById(BTN_ID);
-         if (!btn) {{
-           btn = window.parent.document.createElement("button");
+         let oldBtn = window.parent.document.getElementById(BTN_ID);
+         if (oldBtn) {{
+           try {{ oldBtn.remove(); }} catch(e) {{}}
+         }}
+         let btn = window.parent.document.createElement("button");
           btn.id = BTN_ID;
           btn.type = "button";
           btn.innerText = label;
@@ -2967,9 +2969,9 @@ components.html(
         btn.onmouseleave = function() {{ btn.style.background = "transparent"; }};
 
         const actions = window.parent.document.getElementById(actionsId);
-        if (actions && !actions.contains(btn)) {{
+        if (actions) {{
           actions.appendChild(btn);
-        }} else if (!btn.isConnected) {{
+        }} else {{
           window.parent.document.body.appendChild(btn);
         }}
       }}
