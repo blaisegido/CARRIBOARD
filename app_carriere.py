@@ -346,6 +346,7 @@ def _logout() -> None:
     st.session_state.auth_user = None
     st.session_state.auth_token = None
     st.session_state._clear_auth_local_storage = True
+    st.session_state._save_auth_local_storage = False
     st.session_state.pop("active_project_id", None)
     st.session_state.pop("rename_project_id", None)
     st.session_state.pop("local_data_source", None)
@@ -364,11 +365,35 @@ if _qp_get_first("logout") == "1":
     _logout()
 
 if st.session_state.auth_user is None:
+    # --- PONT DE PERSISTANCE (Auto-Login via localStorage) ---
+    if not _qp_get_first("t") and not _qp_get_first("autologin_failed") and not _qp_get_first("logout"):
+        components.html(
+            f"""
+            <script>
+            (function() {{
+              try {{
+                const tok = localStorage.getItem("{AUTH_TOKEN_STORAGE_KEY}");
+                if (tok && tok.length > 10) {{
+                  const rootWin = window.parent || window;
+                  const url = new URL(rootWin.location.href);
+                  url.searchParams.set("t", tok);
+                  url.searchParams.set("autologin", "1");
+                  rootWin.location.href = url.toString();
+                }}
+              }} catch (e) {{}}
+            }})();
+            </script>
+            """,
+            height=0
+        )
+    # ---------------------------------------------------------
+
     # Si on vient de se déconnecter, on ignore le cookie (il est en train d'être supprimé côté client)
     if st.session_state.get("_clear_auth_local_storage"):
         cookie_tok = None
     else:
         cookie_tok = st.context.cookies.get(AUTH_TOKEN_STORAGE_KEY) if hasattr(st, "context") and hasattr(st.context, "cookies") else None
+    
     token = _qp_get_first("t") or cookie_tok
     if token and hasattr(auth, "verify_session_token") and hasattr(auth, "get_user"):
         try:
@@ -391,10 +416,31 @@ if st.session_state.auth_user is None:
                 st.rerun()
 
 if st.session_state.auth_user is None:
+    # --- LOGIQUE DE SAUVEGARDE / NETTOYAGE ---
     should_clear_ls = bool(st.session_state.get("_clear_auth_local_storage"))
     if should_clear_ls:
         st.session_state._clear_auth_local_storage = False
-        components.html(f'<script>document.cookie = "{AUTH_TOKEN_STORAGE_KEY}=; path=/; max-age=0";</script>', height=0)
+        components.html(
+            f'<script>'
+            f'  document.cookie = "{AUTH_TOKEN_STORAGE_KEY}=; path=/; max-age=0"; '
+            f'  localStorage.removeItem("{AUTH_TOKEN_STORAGE_KEY}");'
+            f'</script>', 
+            height=0
+        )
+
+    # Sauvegarde explicite après succès login
+    if st.session_state.get("_save_auth_local_storage") and st.session_state.get("auth_token"):
+        st.session_state._save_auth_local_storage = False
+        tok_to_save = st.session_state.auth_token
+        components.html(
+            f"""
+            <script>
+            localStorage.setItem("{AUTH_TOKEN_STORAGE_KEY}", "{tok_to_save}");
+            document.cookie = "{AUTH_TOKEN_STORAGE_KEY}={tok_to_save}; path=/; max-age=2592000";
+            </script>
+            """,
+            height=0
+        )
 
     components.html(
         """
@@ -455,6 +501,7 @@ if st.session_state.auth_user is None:
                     except Exception:
                         tok = None
                 st.session_state.auth_token = tok
+                st.session_state._save_auth_local_storage = True
                 params = _qp_read()
                 params.pop("t", None)
                 params.pop("logout", None)
@@ -501,7 +548,7 @@ if st.session_state.get("auth_token"):
     components.html(
         f"""
         <script>
-        document.cookie = "{AUTH_TOKEN_STORAGE_KEY}={st.session_state.auth_token}; path=/; max-age=2592000";
+        document.cookie = "{AUTH_TOKEN_STORAGE_KEY}={st.session_state.auth_token}; path=/; max-age=2592000"; localStorage.setItem("{AUTH_TOKEN_STORAGE_KEY}", "{st.session_state.auth_token}");
         try {{
           const rootWin = window.parent || window;
           const url = new URL(String(rootWin.location.href || ""));
