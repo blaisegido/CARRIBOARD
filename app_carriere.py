@@ -2951,6 +2951,7 @@ try:
         # --- Résolution du chemin (gestion chemins relatifs vs absolus trans-plateformes) ---
         if isinstance(data_source, (str, Path)) and not os.path.isabs(str(data_source)) and "project_files" in str(data_source):
             ds_path = DATA_ROOT / str(data_source).replace("\\", "/")
+            data_source = str(ds_path)
         else:
             ds_path = Path(data_source) if isinstance(data_source, (str, Path)) else None
         # ----------------------------------------------------------------------------------
