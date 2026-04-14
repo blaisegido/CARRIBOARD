@@ -13,7 +13,8 @@ def upload_file(client: Client, user_id: int, project_id: str, remote_path: str,
             file_options={"upsert": "true"}
         )
         return True
-    except Exception:
+    except Exception as e:
+        print(f"Erreur Supabase Upload ({full_storage_path}): {e}")
         return False
 
 def download_file(client: Client, user_id: int, project_id: str, remote_path: str) -> Optional[bytes]:
@@ -22,7 +23,8 @@ def download_file(client: Client, user_id: int, project_id: str, remote_path: st
         full_storage_path = f"user_{user_id}/{project_id}/{remote_path}"
         res = client.storage.from_(BUCKET_NAME).download(full_storage_path)
         return res
-    except Exception:
+    except Exception as e:
+        print(f"Erreur Supabase Download ({full_storage_path}): {e}")
         return None
 
 def delete_project_files(client: Client, user_id: int, project_id: str) -> bool:
@@ -36,5 +38,6 @@ def delete_project_files(client: Client, user_id: int, project_id: str) -> bool:
         file_paths = [f"{prefix}{f['name']}" for f in files]
         client.storage.from_(BUCKET_NAME).remove(file_paths)
         return True
-    except Exception:
+    except Exception as e:
+        print(f"Erreur Supabase Upload ({full_storage_path}): {e}")
         return False

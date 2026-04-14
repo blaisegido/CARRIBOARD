@@ -15,6 +15,7 @@ import importlib.util
 from typing import Optional
 from pathlib import Path
 from datetime import datetime
+import tempfile
 
 import streamlit as st
 import pandas as pd
@@ -1536,8 +1537,14 @@ def _create_project_from_upload(uploaded, theme_idx: int) -> str:
     )
     
     # Upload to Supabase Storage for persistence
-    storage.upload_file(SB_CLIENT, user_id, project_id, saved_path.name, data)
-    
+    upload_ok = storage.upload_file(SB_CLIENT, user_id, project_id, saved_path.name, data)
+    if not upload_ok:
+        st.session_state["_upload_warning"] = (
+            "⚠️ L'extraction a été créée, mais l'upload vers le cloud (Supabase Storage) a échoué. "
+            "Les données ne seront pas restaurées après un redémarrage du serveur. "
+            "Vérifiez vos secrets Supabase (SUPABASE_URL / SUPABASE_KEY)."
+        )
+
     return project_id
 
 
@@ -3014,17 +3021,43 @@ try:
                 st.session_state.local_data_source = data_source
         # ----------------------------------
         if ds_path and not ds_path.exists() and active_project:
-            with st.spinner("Restauration de l'extraction..."):
+            with st.spinner("🔄 Restauration de l'extraction depuis le cloud..."):
                 try:
-                    # On tente de restaurer depuis Supabase Storage
-                    file_data = storage.download_file(SB_CLIENT, user_id, active_project.id, Path(str(active_project.data_path)).name)
+                    remote_filename = Path(str(active_project.data_path)).name
+                    file_data = storage.download_file(SB_CLIENT, user_id, active_project.id, remote_filename)
                     if file_data:
-                        ds_path.parent.mkdir(parents=True, exist_ok=True)
-                        ds_path.write_bytes(file_data)
-                        data_source = str(ds_path.resolve())
+                        # 1) Ecriture dans /tmp (toujours accessible sur Streamlit Cloud)
+                        tmp_restore = (
+                            Path(tempfile.gettempdir())
+                            / "carriboard"
+                            / str(user_id)
+                            / active_project.id
+                            / remote_filename
+                        )
+                        tmp_restore.parent.mkdir(parents=True, exist_ok=True)
+                        tmp_restore.write_bytes(file_data)
+                        # 2) Tentative dins le chemin d'origine
+                        try:
+                            ds_path.parent.mkdir(parents=True, exist_ok=True)
+                            ds_path.write_bytes(file_data)
+                            data_source = str(ds_path.resolve())
+                        except Exception:
+                            # Fallback garanti : /tmp
+                            data_source = str(tmp_restore)
+                        ds_path = Path(data_source)
                         st.session_state.local_data_source = data_source
+                    else:
+                        st.error(
+                            "❌ Le fichier de cette extraction est introuvable dans Supabase Storage. "
+                            "Il n'a probablement pas été uploadé correctement lors de l'import. "
+                            "**Veuillez re-importer votre fichier Excel** via le panneau de gauche."
+                        )
+                        st.stop()
                 except Exception as e:
-                    st.error(f"Erreur lors de la restauration du fichier: {e}")
+                    if "StopException" in type(e).__name__:
+                        raise
+                    st.error(f"❌ Erreur lors de la restauration depuis le cloud : {e}")
+                    st.stop()
         
         raw_full_df = None
         mapping = None
@@ -3620,6 +3653,14 @@ try:
                                             ca_total=stats_u.get("ca_total"),
                                         )
                                         st.session_state.local_data_source = str(saved_path)
+                                        
+                                        # SYNC NEW FILE TO SUPABASE
+                                        try:
+                                            with open(saved_path, "rb") as f_up:
+                                                storage.upload_file(SB_CLIENT, user_id, active_project.id, Path(saved_path).name, f_up.read())
+                                        except Exception as sync_e:
+                                            st.warning(f"La mise à jour locale a réussi, mais la sauvegarde sur le cloud a échoué : {sync_e}")
+                                            
                                 except Exception:
                                     pass
 
