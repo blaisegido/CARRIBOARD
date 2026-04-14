@@ -1521,7 +1521,7 @@ def _create_project_from_upload(uploaded, theme_idx: int) -> str:
         except Exception:
             default_name = f"Extraction du {stats['date_min']} - {stem}"
 
-        projects.create_project(SB_CLIENT,
+    projects.create_project(SB_CLIENT,
         project_id=project_id,
         user_id=user_id,
         name=default_name,
@@ -1655,6 +1655,7 @@ if not st.session_state.active_project_id or active_project is None:
                     if st.button("Ouvrir", key=f"open_project_{p.id}", type="primary", width="stretch"):
                         st.session_state.active_project_id = p.id
                         st.session_state.rename_project_id = None
+                        st.session_state.local_data_source = None
                         _qp_set(t=None, p=p.id)
                         st.rerun()
 
@@ -1812,6 +1813,7 @@ with bar_right:
                                 st.session_state.active_project_id = p.id
                                 st.session_state.rename_project_id = None
                                 st.session_state.delete_project_id = None
+                                st.session_state.local_data_source = None
                                 st.session_state.close_extractions_popover = True
                                 _qp_set(t=None, p=p.id)
                                 st.rerun()
@@ -3012,8 +3014,9 @@ try:
                 st.session_state.local_data_source = data_source
         # ----------------------------------
         if ds_path and not ds_path.exists() and active_project:
-            with st.spinner("Restauration du fichier depuis le cloud..."):
+            with st.spinner("Restauration de l'extraction..."):
                 try:
+                    # On tente de restaurer depuis Supabase Storage
                     file_data = storage.download_file(SB_CLIENT, user_id, active_project.id, Path(str(active_project.data_path)).name)
                     if file_data:
                         ds_path.parent.mkdir(parents=True, exist_ok=True)
