@@ -1,4 +1,4 @@
-﻿import faulthandler
+import faulthandler
 faulthandler.enable()
 
 import os
@@ -1268,16 +1268,37 @@ dossier_app = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_EXTRACTION_SOURCE_NAME = "extraction pont bascule retraité.xlsx"
 
 def _default_extraction_enabled() -> bool:
-    # Always return True so the default extraction works on Streamlit Cloud
-    # without needing secrets explicitly set.
     return True
 
+BUILTIN_EXTRACTIONS = [
+    {
+        "name": "Extraction pont bascule retraité",
+        "candidates": [
+            "extraction pont bascule retraité.xlsx",
+            "extraction pont bsacule retraité.xlsx",
+        ],
+        "default_filename": "extraction pont bascule retraité.xlsx",
+        "theme_idx": 0,
+    },
+    {
+        "name": "Test béton 2025",
+        "candidates": [
+            "Test béton_2025_a envoyer.xlsx",
+        ],
+        "default_filename": "Test béton_2025_a envoyer.xlsx",
+        "theme_idx": 1,
+    },
+    {
+        "name": "Test concassé",
+        "candidates": [
+            "Test concassé.xlsx",
+        ],
+        "default_filename": "Test concassé.xlsx",
+        "theme_idx": 2,
+    }
+]
 
 def _get_default_extraction_url() -> Optional[str]:
-    # Par défaut, on ne charge AUCUNE extraction "de démo" en ligne.
-    # Pour activer un fichier par défaut, définir:
-    # - CARRIBOARD_ENABLE_DEFAULT_EXTRACTION=1
-    # - et CARRIBOARD_DEFAULT_EXTRACTION_URL (secret/env) si besoin
     if not _default_extraction_enabled():
         return None
     raw = (os.environ.get("CARRIBOARD_DEFAULT_EXTRACTION_URL") or "").strip()
@@ -1289,46 +1310,49 @@ def _get_default_extraction_url() -> Optional[str]:
         raw = ""
     return raw or None
 
-
 @st.cache_resource
-def _resolve_default_extraction_path() -> Path:
+def _resolve_builtin_extractions() -> list[dict]:
     if not _default_extraction_enabled():
-        return Path("")
-    candidates = [
-        Path(dossier_app) / "extraction pont bascule retraité.xlsx",
-        Path(dossier_app) / "extraction pont bsacule retraité.xlsx",
-    ]
-    for p in candidates:
-        try:
+        return []
+    
+    resolved = []
+    for ext in BUILTIN_EXTRACTIONS:
+        found_path = None
+        for cand in ext["candidates"]:
+            p = Path(dossier_app) / cand
             if p.exists():
-                return p
-        except Exception:
-            continue
+                found_path = p
+                break
+        
+        if not found_path and ext["default_filename"] == "extraction pont bascule retraité.xlsx":
+            dst = DATA_ROOT / "default_extraction.xlsx"
+            if dst.exists():
+                found_path = dst
+            else:
+                url = _get_default_extraction_url()
+                if url:
+                    try:
+                        r = requests.get(url, timeout=35)
+                        r.raise_for_status()
+                        content = r.content or b""
+                        if len(content) >= 1024:
+                            dst.write_bytes(content)
+                            found_path = dst
+                    except Exception:
+                        pass
+        
+        if found_path:
+            resolved.append({
+                "name": ext["name"],
+                "source_filename": ext["default_filename"],
+                "theme_idx": ext["theme_idx"],
+                "path": str(found_path)
+            })
+            
+    return resolved
 
-    # Sur Streamlit Cloud, le fichier n'est pas commité (il est ignoré par .gitignore).
-    # On le récupère via une URL (secret/env) et on le stocke dans DATA_ROOT.
-    dst = DATA_ROOT / "default_extraction.xlsx"
-    try:
-        if dst.exists():
-            return dst
-    except Exception:
-        pass
-
-    url = _get_default_extraction_url()
-    if url:
-        try:
-            r = requests.get(url, timeout=35)
-            r.raise_for_status()
-            content = r.content or b""
-            if len(content) >= 1024:
-                dst.write_bytes(content)
-        except Exception:
-            pass
-
-    return dst if dst.exists() else candidates[0]
-
-
-fichier_defaut = str(_resolve_default_extraction_path()) if _default_extraction_enabled() else ""
+fichiers_defaut = _resolve_builtin_extractions()
+fichier_defaut = next((b["path"] for b in fichiers_defaut if b["source_filename"] == "extraction pont bascule retraité.xlsx"), "")
 
 user = st.session_state.auth_user
 st.sidebar.markdown(
@@ -1549,43 +1573,92 @@ def _create_project_from_upload(uploaded, theme_idx: int) -> str:
 
 
 def _ensure_default_project_if_needed() -> None:
+    """Crée les projets builtins dans Supabase et uploade leurs fichiers dans Supabase Storage.
+
+    Contrairement à l'ancienne version, cette fonction :
+    - Uploade chaque fichier builtin dans Supabase Storage (persistance après redémarrage serveur)
+    - Stocke un data_path relatif au format 'project_files/user_X/id/nom.xlsx'
+    - Migre automatiquement les anciens enregistrements avec un chemin absolu local
+    """
     existing = projects.list_projects(SB_CLIENT, user_id)
-    if not (_default_extraction_enabled() and fichier_defaut and os.path.exists(fichier_defaut)):
+    if not _default_extraction_enabled():
         return
 
-    # Sur Streamlit Cloud, l'utilisateur peut déjà avoir des extractions :
-    # on s'assure simplement que l'extraction "par défaut" existe aussi.
-    try:
-        default_abs = os.path.abspath(str(fichier_defaut))
+    for builtin in fichiers_defaut:
+        if not builtin.get("path") or not os.path.exists(builtin["path"]):
+            continue
+
+        local_path = Path(builtin["path"])
+        source_filename = builtin["source_filename"]
+
+        # Lecture du contenu binaire du fichier (nécessaire pour l'upload Storage)
+        try:
+            file_data = local_path.read_bytes()
+        except Exception:
+            continue  # Fichier illisible, on passe ce builtin
+
+        # Cherche si un projet builtin existe déjà pour ce fichier (par source_filename)
+        matched_project = None
         for p in (existing or []):
-            try:
-                if os.path.abspath(str(p.data_path)) == default_abs or p.source_filename == DEFAULT_EXTRACTION_SOURCE_NAME:
-                    return
-            except Exception:
-                continue
-    except Exception:
-        pass
+            if p.source_filename == source_filename:
+                matched_project = p
+                break
 
-    try:
-        df_tmp, mapping_tmp = load_data(str(fichier_defaut), clean_version=DATA_CLEAN_VERSION)
-        stats = _compute_project_stats(df_tmp, mapping_tmp)
-    except Exception:
-        stats = {"date_min": None, "date_max": None, "nb_livraisons": None, "tonnage_total": None, "ca_total": None}
+        if matched_project is not None:
+            # Le projet existe déjà — vérifier si son data_path est absolu (ancien format bugué)
+            # Si oui : migrer vers Supabase Storage + data_path relatif
+            dp = str(matched_project.data_path or "")
+            needs_migration = os.path.isabs(dp) or not dp.startswith("project_files/")
 
-    project_id = str(uuid4())
-    projects.create_project(SB_CLIENT,
-        project_id=project_id,
-        user_id=user_id,
-        name="Extraction pont bascule retraité",
-        data_path=str(fichier_defaut),
-        source_filename=DEFAULT_EXTRACTION_SOURCE_NAME,
-        date_min=stats.get("date_min"),
-        date_max=stats.get("date_max"),
-        nb_livraisons=stats.get("nb_livraisons"),
-        tonnage_total=stats.get("tonnage_total"),
-        ca_total=stats.get("ca_total"),
-        theme_idx=0,
-    )
+            if needs_migration:
+                # Upload du fichier dans Supabase Storage
+                storage.upload_file(SB_CLIENT, user_id, matched_project.id, local_path.name, file_data)
+                # Mise à jour du data_path vers le format relatif standard
+                new_data_path = f"project_files/user_{user_id}/{matched_project.id}/{local_path.name}"
+                projects.update_project_data(
+                    SB_CLIENT,
+                    user_id=user_id,
+                    project_id=matched_project.id,
+                    data_path=new_data_path,
+                    date_min=matched_project.date_min,
+                    date_max=matched_project.date_max,
+                    nb_livraisons=matched_project.nb_livraisons,
+                    tonnage_total=matched_project.tonnage_total,
+                    ca_total=matched_project.ca_total,
+                )
+            # data_path déjà au bon format : on s'assure que le fichier est bien dans Storage
+            # (re-upload idempotent grâce à upsert=true dans storage.upload_file)
+            else:
+                storage.upload_file(SB_CLIENT, user_id, matched_project.id, local_path.name, file_data)
+            continue
+
+        # Nouveau projet builtin : calcul des stats, création en BD + upload Storage
+        try:
+            df_tmp, mapping_tmp = load_data(builtin["path"], clean_version=DATA_CLEAN_VERSION)
+            stats = _compute_project_stats(df_tmp, mapping_tmp)
+        except Exception:
+            stats = {"date_min": None, "date_max": None, "nb_livraisons": None, "tonnage_total": None, "ca_total": None}
+
+        project_id = str(uuid4())
+        relative_data_path = f"project_files/user_{user_id}/{project_id}/{local_path.name}"
+
+        projects.create_project(SB_CLIENT,
+            project_id=project_id,
+            user_id=user_id,
+            name=builtin["name"],
+            data_path=relative_data_path,
+            source_filename=source_filename,
+            date_min=stats.get("date_min"),
+            date_max=stats.get("date_max"),
+            nb_livraisons=stats.get("nb_livraisons"),
+            tonnage_total=stats.get("tonnage_total"),
+            ca_total=stats.get("ca_total"),
+            theme_idx=builtin["theme_idx"],
+        )
+
+        # Upload dans Supabase Storage — garantit la persistance après redémarrage du serveur
+        storage.upload_file(SB_CLIENT, user_id, project_id, local_path.name, file_data)
+
     # Ne pas forcer l'ouverture : l'utilisateur choisit d'abord l'extraction.
 
 
@@ -1747,6 +1820,10 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+if "_upload_warning" in st.session_state:
+    st.warning(st.session_state["_upload_warning"])
+    del st.session_state["_upload_warning"]
 
 bar_left, bar_right = st.columns([7, 3], vertical_alignment="center")
 with bar_left:
@@ -3014,11 +3091,11 @@ try:
         # ----------------------------------------------------------------------------------
         
         # --- FIX: extraction par defaut ---
-        if active_project and active_project.source_filename == DEFAULT_EXTRACTION_SOURCE_NAME:
-            if fichier_defaut and os.path.exists(fichier_defaut):
-                ds_path = Path(fichier_defaut)
-                data_source = str(ds_path)
-                st.session_state.local_data_source = data_source
+        builtin_match = next((b for b in fichiers_defaut if active_project and active_project.source_filename == b["source_filename"]), None)
+        if builtin_match and os.path.exists(builtin_match["path"]):
+            ds_path = Path(builtin_match["path"])
+            data_source = str(ds_path)
+            st.session_state.local_data_source = data_source
         # ----------------------------------
         if ds_path and not ds_path.exists() and active_project:
             with st.spinner("🔄 Restauration de l'extraction depuis le cloud..."):
