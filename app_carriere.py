@@ -1316,14 +1316,43 @@ def _resolve_builtin_extractions() -> list[dict]:
         return []
     
     resolved = []
+    # Liste les fichiers une seule fois pour la recherche flexible
+    try:
+        fichiers_reels = os.listdir(dossier_app)
+    except Exception:
+        fichiers_reels = []
+
     for ext in BUILTIN_EXTRACTIONS:
         found_path = None
+        # 1. Tentative de correspondance exacte
         for cand in ext["candidates"]:
             p = Path(dossier_app) / cand
             if p.exists():
                 found_path = p
                 break
         
+        # 2. Correspondance flexible (accents, encodages, espaces) si échec
+        if not found_path:
+            for f in fichiers_reels:
+                # On compare les noms en minuscules et sans accents si possible
+                # (Simple check de proximité pour les builtins connus)
+                f_low = f.lower()
+                target_low = ext["default_filename"].lower()
+                
+                # Check si c'est un "Test béton"
+                if "beton" in target_low and "beton" in f_low.replace("é", "e"):
+                    found_path = Path(dossier_app) / f
+                    break
+                # Check si c'est un "Test concassé"
+                if "concasse" in target_low and "concasse" in f_low.replace("é", "e"):
+                    found_path = Path(dossier_app) / f
+                    break
+                # Check si c'est "extraction pont bascule"
+                if "bascule" in target_low and "bascule" in f_low:
+                    found_path = Path(dossier_app) / f
+                    break
+        
+        # 3. Fallback URL pour l'extraction principale
         if not found_path and ext["default_filename"] == "extraction pont bascule retraité.xlsx":
             dst = DATA_ROOT / "default_extraction.xlsx"
             if dst.exists():
@@ -3125,9 +3154,35 @@ try:
                         st.session_state.local_data_source = data_source
                     else:
                         st.error(
-                            "❌ Le fichier de cette extraction est introuvable dans Supabase Storage. "
-                            "Il n'a probablement pas été uploadé correctement lors de l'import. "
-                            "**Veuillez re-importer votre fichier Excel** via le panneau de gauche."
+                            "❌ Le fichier de cette extraction est introuvable dans Supabase Storage."
+                        )
+                        st.info(
+                            f"**Diagnostic :**\n"
+                            f"- Projet ID : `{active_project.id}`\n"
+                            f"- Fichier distant : `{remote_filename}`\n"
+                            f"- User ID : `{user_id}`\n"
+                            f"- Path enregistré : `{active_project.data_path}`"
+                        )
+                        
+                        # Tentative de récupération pour les builtins
+                        builtin_match = next((b for b in fichiers_defaut if active_project and (active_project.source_filename == b["source_filename"] or active_project.name == b["name"])), None)
+                        if builtin_match:
+                            st.warning("Cette extraction semble être un modèle par défaut. Voulez-vous tenter de la réparer ?")
+                            if st.button("🔧 Réparer automatiquement"):
+                                try:
+                                    file_data_repair = Path(builtin_match["path"]).read_bytes()
+                                    # Force l'upload
+                                    storage.upload_file(SB_CLIENT, user_id, active_project.id, Path(builtin_match["path"]).name, file_data_repair)
+                                    # Mise à jour du path en base pour être sûr
+                                    new_dp = f"project_files/user_{user_id}/{active_project.id}/{Path(builtin_match["path"]).name}"
+                                    projects.update_project_data(SB_CLIENT, user_id=user_id, project_id=active_project.id, data_path=new_dp)
+                                    st.success("Réparation réussie ! Rechargement...")
+                                    st.rerun()
+                                except Exception as e_repair:
+                                    st.error(f"Échec de la réparation : {e_repair}")
+
+                        st.markdown(
+                            "**Action recommandée :** Veuillez re-importer votre fichier Excel via le panneau de gauche."
                         )
                         st.stop()
                 except Exception as e:

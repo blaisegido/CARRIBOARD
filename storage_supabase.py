@@ -1,10 +1,20 @@
-﻿from typing import Optional
+from typing import Optional
 from supabase import Client
 
 BUCKET_NAME = "projects"
 
+def ensure_bucket_exists(client: Client) -> None:
+    try:
+        buckets = client.storage.list_buckets()
+        bucket_names = [b.name for b in buckets]
+        if BUCKET_NAME not in bucket_names:
+            client.storage.create_bucket(BUCKET_NAME, options={"public": False})
+    except Exception as e:
+        pass
+
 def upload_file(client: Client, user_id: int, project_id: str, remote_path: str, data: bytes) -> bool:
     """Uploads a file to Supabase Storage."""
+    ensure_bucket_exists(client)
     try:
         full_storage_path = f"user_{user_id}/{project_id}/{remote_path}"
         client.storage.from_(BUCKET_NAME).upload(
