@@ -258,7 +258,13 @@ DATA_ROOT = _data_root_cached()
 @st.cache_resource
 def _supabase_client() -> Client:
     url = st.secrets.get("SUPABASE_URL") or os.environ.get("SUPABASE_URL")
-    key = st.secrets.get("SUPABASE_KEY") or os.environ.get("SUPABASE_KEY")
+    # Utilise la clé service_role en priorité pour les opérations de stockage
+    key = (
+        st.secrets.get("SUPABASE_SERVICE_KEY") or 
+        os.environ.get("SUPABASE_SERVICE_KEY") or
+        st.secrets.get("SUPABASE_KEY") or 
+        os.environ.get("SUPABASE_KEY")
+    )
     if not url: url = "https://wbiashsnyftvjxbdqznh.supabase.co"
     if not key: key = "sb_publishable_HWr5LyhovG74L_iR7uuBnQ_F6BNDgLy"
     return create_client(url, key)
@@ -3777,7 +3783,7 @@ try:
                                         projects.update_project_data(SB_CLIENT,
                                             user_id=user_id,
                                             project_id=active_project.id,
-                                            data_path=f"project_files/user_{user_id}/{project_id}/{saved_path.name}",
+                                            data_path=f"project_files/user_{user_id}/{active_project.id}/{Path(saved_path).name}",
                                             date_min=stats_u.get("date_min"),
                                             date_max=stats_u.get("date_max"),
                                             nb_livraisons=stats_u.get("nb_livraisons"),
@@ -3793,8 +3799,9 @@ try:
                                         except Exception as sync_e:
                                             st.warning(f"La mise à jour locale a réussi, mais la sauvegarde sur le cloud a échoué : {sync_e}")
                                             
-                                except Exception:
-                                    pass
+                                except Exception as e_sync:
+                                    st.warning(f"⚠️ Erreur lors de la synchronisation avec le cloud : {e_sync}")
+
 
                                 details = {
                                     "Fichier enregistré": saved_path,
