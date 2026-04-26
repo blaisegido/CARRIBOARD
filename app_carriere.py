@@ -153,12 +153,14 @@ PLOTLY_FONT_FAMILY = 'Inter, Roboto, system-ui, -apple-system, "Segoe UI", Arial
 
 def apply_plotly_style(fig, *, kind: str = "default"):
     try:
+        # On ne force plus 'plotly_white' pour laisser Streamlit gérer le thème clair/sombre.
+        # Streamlit applique automatiquement son thème si theme="streamlit" est passé à st.plotly_chart.
         fig.update_layout(
-            template="plotly_white",
-            font=dict(family=PLOTLY_FONT_FAMILY, size=13, color="#111827"),
+            font=dict(family=PLOTLY_FONT_FAMILY, size=13),
             title_font_size=16,
             legend=dict(font=dict(size=12)),
             hoverlabel=dict(font_size=13),
+            margin=dict(t=50, b=50, l=50, r=50),
         )
         if kind == "pie":
             fig.update_layout(
@@ -168,15 +170,14 @@ def apply_plotly_style(fig, *, kind: str = "default"):
                     yanchor="middle",
                     y=0.5,
                     xanchor="right",
-                    x=1.0,
-                    bgcolor="rgba(255,255,255,0.75)",
-                    bordercolor="rgba(0,0,0,0.08)",
-                    borderwidth=1,
+                    x=1.1,
+                    # On évite les fonds opaques en dur pour le mode sombre
+                    bgcolor="rgba(255,255,255,0)", 
                     font=dict(size=11),
                 ),
             )
-        fig.update_xaxes(title_font=dict(size=13), tickfont=dict(size=11))
-        fig.update_yaxes(title_font=dict(size=13), tickfont=dict(size=11))
+        fig.update_xaxes(title_font=dict(size=13), tickfont=dict(size=11), gridcolor="rgba(128,128,128,0.1)")
+        fig.update_yaxes(title_font=dict(size=13), tickfont=dict(size=11), gridcolor="rgba(128,128,128,0.1)")
     except Exception:
         return fig
     return fig
@@ -200,6 +201,60 @@ THEMES = [
         "qualitative": ["#1f77b4", "#17becf", "#2ca02c", "#9467bd", "#e377c2", "#8c564b", "#7f7f7f"],
         "table_cmap": "PuBu",
     },
+    {
+        "name": "Violet",
+        "primary": "#8E44AD",
+        "secondary": "#BB8FCE",
+        "accent": "#5B2C6F",
+        "pie": ["#8E44AD", "#AF7AC5", "#BB8FCE", "#D2B4DE", "#EBDEF0", "#5B2C6F"],
+        "qualitative": ["#8E44AD", "#9B59B6", "#BB8FCE", "#D2B4DE", "#5B2C6F", "#2E86C1", "#17A589"],
+        "table_cmap": "BuPu",
+    },
+    {
+        "name": "Vert Emeraude",
+        "primary": "#27AE60",
+        "secondary": "#82E0AA",
+        "accent": "#1E8449",
+        "pie": ["#27AE60", "#58D68D", "#82E0AA", "#ABEBC6", "#D5F5E3", "#1E8449"],
+        "qualitative": ["#27AE60", "#2ECC71", "#82E0AA", "#ABEBC6", "#1E8449", "#D4AC0D", "#CA6F1E"],
+        "table_cmap": "YlGn",
+    },
+    {
+        "name": "Indigo",
+        "primary": "#3F51B5",
+        "secondary": "#9FA8DA",
+        "accent": "#1A237E",
+        "pie": ["#3F51B5", "#5C6BC0", "#7986CB", "#9FA8DA", "#C5CAE9", "#1A237E"],
+        "qualitative": ["#3F51B5", "#303F9F", "#7986CB", "#9FA8DA", "#1A237E", "#E91E63", "#00BCD4"],
+        "table_cmap": "GnBu",
+    },
+    {
+        "name": "Rose Fuchsia",
+        "primary": "#E91E63",
+        "secondary": "#F48FB1",
+        "accent": "#880E4F",
+        "pie": ["#E91E63", "#EC407A", "#F06292", "#F48FB1", "#F8BBD0", "#880E4F"],
+        "qualitative": ["#E91E63", "#C2185B", "#F06292", "#F48FB1", "#880E4F", "#FFC107", "#673AB7"],
+        "table_cmap": "RdPu",
+    },
+    {
+        "name": "Gris Anthracite",
+        "primary": "#34495E",
+        "secondary": "#ABB2B9",
+        "accent": "#1C2833",
+        "pie": ["#34495E", "#5D6D7E", "#85929E", "#ABB2B9", "#D5D8DC", "#1C2833"],
+        "qualitative": ["#34495E", "#2C3E50", "#85929E", "#ABB2B9", "#1C2833", "#F39C12", "#E74C3C"],
+        "table_cmap": "Greys",
+    },
+    {
+        "name": "Turquoise",
+        "primary": "#16A085",
+        "secondary": "#76D7C4",
+        "accent": "#0E6251",
+        "pie": ["#16A085", "#1ABC9C", "#48C9B0", "#76D7C4", "#A3E4D7", "#0E6251"],
+        "qualitative": ["#16A085", "#1ABC9C", "#48C9B0", "#76D7C4", "#0E6251", "#2980B9", "#8E44AD"],
+        "table_cmap": "YlGnBu",
+    }
 ]
 
 # Configuration de la page
@@ -1481,6 +1536,17 @@ if "close_extractions_popover" not in st.session_state:
     st.session_state.close_extractions_popover = False
 
 
+def _get_next_theme_idx(existing_projects: list) -> int:
+    """Détermine l'index du prochain thème à utiliser en fonction des extractions existantes."""
+    if not existing_projects:
+        return 0
+    used_indices = [int(p.theme_idx or 0) for p in existing_projects]
+    if not used_indices:
+        return 0
+    # On prend l'index maximum utilisé et on passe au suivant, avec rotation
+    return (max(used_indices) + 1) % len(THEMES)
+
+
 def _safe_stem(filename: str) -> str:
     stem = Path(str(filename or "")).stem.strip() or "extraction"
     stem = re.sub(r"\s+", " ", stem)
@@ -1557,7 +1623,11 @@ def _compute_project_stats(df: pd.DataFrame, mapping: dict) -> dict:
     }
 
 
-def _create_project_from_upload(uploaded, theme_idx: int) -> str:
+def _create_project_from_upload(uploaded) -> str:
+    # Calcul automatique du prochain thème
+    existing_p = projects.list_projects(SB_CLIENT, user_id)
+    theme_idx = _get_next_theme_idx(existing_p)
+
     project_id = str(uuid4())
     original_name = getattr(uploaded, "name", "") or "extraction"
     suffix = Path(original_name).suffix.lower() or ".xlsx"
@@ -1706,9 +1776,7 @@ uploaded_file = st.sidebar.file_uploader(
     key=f"sidebar_uploader_{st.session_state.sidebar_upload_counter}",
 )
 if uploaded_file is not None:
-    current = projects.get_project(SB_CLIENT, user_id, st.session_state.active_project_id) if st.session_state.active_project_id else None
-    next_theme_idx = (int(current.theme_idx) + 1) % len(THEMES) if current else 0
-    new_id = _create_project_from_upload(uploaded_file, theme_idx=next_theme_idx)
+    new_id = _create_project_from_upload(uploaded_file)
     st.session_state.active_project_id = new_id
     st.session_state.rename_project_id = new_id
     st.session_state.sidebar_upload_counter += 1
@@ -1785,9 +1853,7 @@ if not st.session_state.active_project_id or active_project is None:
         key=f"picker_uploader_{st.session_state.picker_upload_counter}",
     )
     if picker_file is not None:
-        current = None
-        next_theme_idx = 0
-        new_id = _create_project_from_upload(picker_file, theme_idx=next_theme_idx)
+        new_id = _create_project_from_upload(picker_file)
         st.session_state.active_project_id = new_id
         st.session_state.rename_project_id = new_id
         st.session_state.picker_upload_counter += 1
@@ -2012,9 +2078,7 @@ if st.session_state.show_top_uploader:
         label_visibility="collapsed",
     )
     if top_file is not None:
-        current = active_project
-        next_theme_idx = (int(current.theme_idx) + 1) % len(THEMES) if current else 0
-        new_id = _create_project_from_upload(top_file, theme_idx=next_theme_idx)
+        new_id = _create_project_from_upload(top_file)
         st.session_state.active_project_id = new_id
         st.session_state.rename_project_id = new_id
         st.session_state.top_upload_counter += 1
@@ -3434,7 +3498,7 @@ try:
                                         title="Graphique 1: Évolution Mensuelle du CA (€)", markers=True,
                                         color_discrete_sequence=[theme["primary"]])
                          fig1.update_layout(xaxis_title="Mois", yaxis_title="CA (€)")
-                         st.plotly_chart(apply_plotly_style(fig1), width="stretch")
+                         st.plotly_chart(apply_plotly_style(fig1), use_container_width=True, theme="streamlit")
 
                 # Graphique 2 : Évolution mensuelle du Tonnage (Histogramme)
                 with row1_col2:
@@ -3477,7 +3541,7 @@ try:
                                 texttemplate="%{text}",
                             )
                             fig3_t.update_layout(margin=dict(t=8, b=24, l=8, r=8), uniformtext_minsize=10, uniformtext_mode="hide")
-                            st.plotly_chart(apply_plotly_style(fig3_t, kind="pie"), width="stretch")
+                            st.plotly_chart(apply_plotly_style(fig3_t, kind="pie"), use_container_width=True, theme="streamlit")
                         with tab_p2:
                             labels = df_prod_pie[produit_col].astype(str).tolist()
                             pcts = _pie_percent_text(df_prod_pie[ca_col], decimals=1)
@@ -3500,7 +3564,7 @@ try:
                                 texttemplate="%{text}",
                             )
                             fig3_ca.update_layout(margin=dict(t=8, b=24, l=8, r=8), uniformtext_minsize=10, uniformtext_mode="hide")
-                            st.plotly_chart(apply_plotly_style(fig3_ca, kind="pie"), width="stretch")
+                            st.plotly_chart(apply_plotly_style(fig3_ca, kind="pie"), use_container_width=True, theme="streamlit")
 
                 # Graphique 4 : Top 10 Clients (Barre horizontale)
                 with row2_col2:
@@ -3515,7 +3579,7 @@ try:
                                       hover_data=[poids_col])
                         fig4.update_traces(texttemplate='%{text:.2s} €', textposition='outside')
                         fig4.update_layout(xaxis_title="CA (€)", yaxis_title="", margin=dict(l=150))
-                        st.plotly_chart(apply_plotly_style(fig4), width="stretch")
+                        st.plotly_chart(apply_plotly_style(fig4), use_container_width=True, theme="streamlit")
 
                 row3_col1, row3_col2 = st.columns(2)
 
@@ -3536,7 +3600,7 @@ try:
                             xaxis=dict(showgrid=False),
                             yaxis=dict(showgrid=False),
                         )
-                        st.plotly_chart(apply_plotly_style(fig5), width="stretch")
+                        st.plotly_chart(apply_plotly_style(fig5), use_container_width=True, theme="streamlit")
 
                 # Graphique 6 : Comparatif Mensuel CA vs Tonnage (Double axe)
                 with row3_col2:
@@ -3560,7 +3624,7 @@ try:
                             ),
                             legend=dict(x=0, y=1.1, orientation="h"),
                         )
-                        st.plotly_chart(apply_plotly_style(fig6), width="stretch")
+                        st.plotly_chart(apply_plotly_style(fig6), use_container_width=True, theme="streamlit")
             except Exception as e:
                 st.write(f"Erreur d'affichage des graphiques : {e}")
 
@@ -3909,7 +3973,7 @@ try:
                                 texttemplate="%{text}",
                             )
                             fig_pie.update_layout(showlegend=True, margin=dict(t=8, b=24, l=8, r=8), uniformtext_minsize=10, uniformtext_mode="hide")
-                            st.plotly_chart(apply_plotly_style(fig_pie, kind="pie"), width="stretch")
+                            st.plotly_chart(apply_plotly_style(fig_pie, kind="pie"), use_container_width=True, theme="streamlit")
 
             # Onglet 2 : Évolution des livraisons (courbes croisées)
             with tab_produit:
@@ -3944,7 +4008,7 @@ try:
                         )
                         fig_lines.update_layout(xaxis_title="Période", yaxis_title="Somme de Net (T)", 
                                                 legend_title="Produit", hovermode="x unified")
-                        st.plotly_chart(apply_plotly_style(fig_lines), width="stretch")
+                        st.plotly_chart(apply_plotly_style(fig_lines), use_container_width=True, theme="streamlit")
 
             # Onglet 3 : Performance clients (analyse matricielle)
             with tab_livraison:
@@ -4031,7 +4095,7 @@ try:
                             color_discrete_sequence=theme["qualitative"],
                         )
                         fig_stacked.update_layout(xaxis_title="Clients (Top 20)", yaxis_title="Tonnage (T)", barmode='stack', hovermode="x unified")
-                        st.plotly_chart(apply_plotly_style(fig_stacked), width="stretch")
+                        st.plotly_chart(apply_plotly_style(fig_stacked), use_container_width=True, theme="streamlit")
 
         # --- Base de données Brute ---
         st.markdown("---")
